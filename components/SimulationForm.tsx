@@ -14,11 +14,20 @@ const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
 ];
 
 
+type ListingPreview = {
+  title: string | null;
+  propertyType: string | null;
+  address: string | null;
+  imageUrl: string | null;
+};
+
 interface Props {
   initialData: PropertyInput;
   onCalculate: (data: PropertyInput) => void;
   autoFilledKeys?: (keyof PropertyInput)[];
   onFieldTouch?: (key: keyof PropertyInput) => void;
+  listing?: ListingPreview | null;
+  listingUrl?: string | null;
 }
 
 export const SimulationForm: React.FC<Props> = ({
@@ -26,10 +35,13 @@ export const SimulationForm: React.FC<Props> = ({
   onCalculate,
   autoFilledKeys = [],
   onFieldTouch,
+  listing = null,
+  listingUrl = null,
 }) => {
   const [formData, setFormData] = useState<PropertyInput>(initialData);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [listingImageError, setListingImageError] = useState(false);
   const isBlankInput = (data: PropertyInput) =>
     data.price === 0 &&
     data.loanAmount === 0 &&
@@ -51,12 +63,31 @@ export const SimulationForm: React.FC<Props> = ({
   const displayPercent = (value: number) => (isPristine && value === 0 ? "" : value);
   const autoFilledSet = useMemo(() => new Set(autoFilledKeys), [autoFilledKeys]);
   const isAutoFilled = (key: keyof PropertyInput) => autoFilledSet.has(key);
+  const listingUrlLabel = useMemo(() => {
+    if (!listingUrl) return "";
+    try {
+      const parsed = new URL(listingUrl);
+      const path = parsed.pathname.replace(/\/$/, "");
+      return `${parsed.hostname}${path}`;
+    } catch {
+      return listingUrl;
+    }
+  }, [listingUrl]);
+  const listingImageSrc =
+    listing?.imageUrl && listingUrl
+      ? `/api/rakumachi-image?url=${encodeURIComponent(listing.imageUrl)}&ref=${encodeURIComponent(
+          listingUrl
+        )}`
+      : null;
   const renderLabel = (text: string, key: keyof PropertyInput) => (
     <label className={isAutoFilled(key) ? "auto-label" : undefined}>
       {text}
       {isAutoFilled(key) ? <span className="auto-pill">推定</span> : null}
     </label>
   );
+  useEffect(() => {
+    setListingImageError(false);
+  }, [listing?.imageUrl, listingUrl]);
   const legalLife = LEGAL_USEFUL_LIFE[formData.structure];
   const miscCostRate = Number.isFinite(formData.miscCostRate)
     ? formData.miscCostRate
@@ -499,6 +530,42 @@ export const SimulationForm: React.FC<Props> = ({
       {isCollapsed ? null : (
         <div className="form-scroll">
           <div className="form-row">
+            {listing ? (
+              <div className="form-panel listing-panel">
+                <div className="import-listing listing-panel-card">
+                  {listingImageSrc && !listingImageError ? (
+                    <img
+                      src={listingImageSrc}
+                      alt="物件写真"
+                      loading="lazy"
+                      onError={() => setListingImageError(true)}
+                    />
+                  ) : (
+                    <div className="listing-placeholder">No Image</div>
+                  )}
+                  <div className="listing-meta">
+                    {listing.propertyType ? (
+                      <span className="listing-chip">{listing.propertyType}</span>
+                    ) : null}
+                    {listing.title ? <div className="listing-title">{listing.title}</div> : null}
+                    {listing.address ? (
+                      <div className="listing-address">{listing.address}</div>
+                    ) : null}
+                    {listingUrl ? (
+                      <a
+                        className="listing-url"
+                        href={listingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={listingUrl}
+                      >
+                        {listingUrlLabel}
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {/* --- 1. 基本情報セクション --- */}
             <div className="form-section form-panel">
               <div className="form-panel-head">

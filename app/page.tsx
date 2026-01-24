@@ -430,6 +430,11 @@ export default function Home() {
     setSelectedImportId(null);
   };
 
+  const selectedImport = useMemo(
+    () => (selectedImportId ? importHistory.find((item) => item.id === selectedImportId) ?? null : null),
+    [importHistory, selectedImportId]
+  );
+
   const handleFieldTouch = (key: keyof PropertyInput) => {
     setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
   };
@@ -1766,6 +1771,8 @@ export default function Home() {
             onCalculate={(data) => setInputData(data)}
             autoFilledKeys={autoFilledKeys}
             onFieldTouch={handleFieldTouch}
+            listing={selectedImport?.listing ?? null}
+            listingUrl={selectedImport?.url ?? null}
           />
         </div>
         <div className="sheet-grid">

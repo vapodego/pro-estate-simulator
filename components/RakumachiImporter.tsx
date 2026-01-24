@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { PropertyInput, StructureType } from "../utils/types";
 import {
   getSuggestedBuildingRatio,
@@ -157,7 +157,6 @@ export const RakumachiImporter = ({
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
-  const [imageError, setImageError] = useState(false);
 
   const manualDefaults = useMemo(() => {
     const toDefault = (value: number, scale = 1) =>
@@ -183,34 +182,6 @@ export const RakumachiImporter = ({
     });
     return counts;
   }, [result]);
-
-  const selectedItem = useMemo(
-    () => history.find((item) => item.id === selectedHistoryId) ?? null,
-    [history, selectedHistoryId]
-  );
-  const selectedListing = selectedItem?.listing ?? null;
-  const listingToShow = showDetails ? result?.listing ?? null : selectedListing ?? result?.listing ?? null;
-  const listingSourceUrl = showDetails ? url.trim() : selectedItem?.url ?? url.trim();
-  const imageSrc =
-    listingToShow?.imageUrl && listingSourceUrl
-      ? `/api/rakumachi-image?url=${encodeURIComponent(listingToShow.imageUrl)}&ref=${encodeURIComponent(
-          listingSourceUrl
-        )}`
-      : null;
-  const listingUrlLabel = useMemo(() => {
-    if (!listingSourceUrl) return "";
-    try {
-      const parsed = new URL(listingSourceUrl);
-      const path = parsed.pathname.replace(/\/$/, "");
-      return `${parsed.hostname}${path}`;
-    } catch {
-      return listingSourceUrl;
-    }
-  }, [listingSourceUrl]);
-
-  useEffect(() => {
-    setImageError(false);
-  }, [listingToShow?.imageUrl, listingSourceUrl]);
 
   const getSuggestedManuals = (fields: Record<string, ImportField>) => {
     const price = Number(fields.priceYen?.value ?? currentInput.price ?? 0);
@@ -386,45 +357,6 @@ export const RakumachiImporter = ({
             >
               履歴を削除
             </button>
-          </div>
-        ) : null}
-        {listingToShow?.title ||
-        listingToShow?.propertyType ||
-        listingToShow?.address ||
-        listingToShow?.imageUrl ? (
-          <div className="import-listing">
-            {imageSrc && !imageError ? (
-              <img
-                src={imageSrc}
-                alt="物件写真"
-                loading="lazy"
-                onError={() => setImageError(true)}
-              />
-            ) : (
-              <div className="listing-placeholder">No Image</div>
-            )}
-            <div className="listing-meta">
-              {listingToShow?.propertyType ? (
-                <span className="listing-chip">{listingToShow.propertyType}</span>
-              ) : null}
-              {listingToShow?.title ? (
-                <div className="listing-title">{listingToShow.title}</div>
-              ) : null}
-              {listingToShow?.address ? (
-                <div className="listing-address">{listingToShow.address}</div>
-              ) : null}
-              {listingSourceUrl ? (
-                <a
-                  className="listing-url"
-                  href={listingSourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={listingSourceUrl}
-                >
-                  {listingUrlLabel}
-                </a>
-              ) : null}
-            </div>
           </div>
         ) : null}
         {error ? <div className="auth-error">{error}</div> : null}

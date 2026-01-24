@@ -577,6 +577,14 @@ a {
   flex: 0 0 360px;
 }
 
+.listing-panel {
+  flex: 0 0 280px;
+}
+
+.listing-panel-card {
+  width: 100%;
+}
+
 .form-panel .form-grid + .form-grid {
   margin-top: 10px;
 }
