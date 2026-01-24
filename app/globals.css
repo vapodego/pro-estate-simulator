@@ -215,7 +215,7 @@ a {
 }
 
 .step-zone.active {
-  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.45);
+  box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.45);
 }
 
 .input-section.step-zone {
@@ -273,17 +273,18 @@ a {
   border: 1px solid rgba(148, 163, 184, 0.35);
   background: rgba(148, 163, 184, 0.14);
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--ink-2);
 }
 
 .step-item.active {
-  border-color: rgba(15, 118, 110, 0.5);
-  background: rgba(15, 118, 110, 0.18);
-  color: var(--accent);
+  border-color: rgba(243, 156, 18, 0.6);
+  background: rgba(243, 156, 18, 0.18);
+  color: #a14a00;
 }
 
 .step-index {
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -308,14 +309,14 @@ a {
   align-items: center;
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: #0f172a;
   background: rgba(148, 163, 184, 0.2);
 }
 
 .step-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--ink-2);
 }
