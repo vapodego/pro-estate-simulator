@@ -1756,24 +1756,29 @@ export default function Home() {
       </header>
 
       <section className="sheet">
-        <div className="sheet-top">
-          <RakumachiImporter
-            currentInput={inputData}
-            onApply={handleImportApply}
-            history={importHistory}
-            selectedHistoryId={selectedImportId}
-            onSelectHistory={handleImportSelect}
-            onClearHistory={handleImportClear}
-          />
-          <SimulationForm
-            key={formVersion}
-            initialData={inputData}
-            onCalculate={(data) => setInputData(data)}
-            autoFilledKeys={autoFilledKeys}
-            onFieldTouch={handleFieldTouch}
-            listing={selectedImport?.listing ?? null}
-            listingUrl={selectedImport?.url ?? null}
-          />
+        <div className="input-section">
+          <div className="input-section-head">
+            <span className="input-section-badge">ユーザー入力</span>
+          </div>
+          <div className="sheet-top">
+            <RakumachiImporter
+              currentInput={inputData}
+              onApply={handleImportApply}
+              history={importHistory}
+              selectedHistoryId={selectedImportId}
+              onSelectHistory={handleImportSelect}
+              onClearHistory={handleImportClear}
+            />
+            <SimulationForm
+              key={formVersion}
+              initialData={inputData}
+              onCalculate={(data) => setInputData(data)}
+              autoFilledKeys={autoFilledKeys}
+              onFieldTouch={handleFieldTouch}
+              listing={selectedImport?.listing ?? null}
+              listingUrl={selectedImport?.url ?? null}
+            />
+          </div>
         </div>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
