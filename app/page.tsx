@@ -1810,7 +1810,7 @@ export default function Home() {
         <span className="step-pill">Step 1</span>
         <span className="step-title">URL入力</span>
       </div>
-      <div className="top-import">
+      <div className={`top-import step-zone${currentStep === 1 ? " active" : ""}`}>
         <RakumachiImporter
           currentInput={inputData}
           onApply={handleImportApply}
@@ -1818,10 +1818,11 @@ export default function Home() {
           selectedHistoryId={selectedImportId}
           onSelectHistory={handleImportSelect}
           onClearHistory={handleImportClear}
+          highlightStep2={currentStep === 2}
         />
       </div>
 
-      <div className="input-section">
+      <div className={`input-section step-zone${currentStep === 3 ? " active" : ""}`}>
         <div className="input-section-head">
           <span className="step-pill">Step 3</span>
           <span className="input-section-badge">ユーザー入力</span>
@@ -1843,7 +1844,7 @@ export default function Home() {
         <span className="step-pill">Step 4</span>
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
-      <section className="sheet" ref={resultsRef}>
+      <section className={`sheet step-zone${currentStep === 4 ? " active" : ""}`} ref={resultsRef}>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext

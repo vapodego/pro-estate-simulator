@@ -140,6 +140,7 @@ type Props = {
   selectedHistoryId?: string | null;
   onSelectHistory?: (id: string) => void;
   onClearHistory?: () => void;
+  highlightStep2?: boolean;
 };
 
 export const RakumachiImporter = ({
@@ -149,6 +150,7 @@ export const RakumachiImporter = ({
   selectedHistoryId = null,
   onSelectHistory,
   onClearHistory,
+  highlightStep2 = false,
 }: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -320,7 +322,7 @@ export const RakumachiImporter = ({
           </button>
         </div>
         {history.length > 0 ? (
-          <div className="import-history-row">
+          <div className={`import-history-row step-zone${highlightStep2 ? " active" : ""}`}>
             <div className="step-subhead">
               <span className="step-pill">Step 2</span>
               <span className="step-title">抽出確認</span>
