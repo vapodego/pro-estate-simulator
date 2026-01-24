@@ -216,6 +216,23 @@ a {
 
 .step-zone.active {
   box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.45);
+  animation: pulse-outline 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse-outline {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-zone.active {
+    animation: none;
+  }
 }
 
 .input-section.step-zone {
