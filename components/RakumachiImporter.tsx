@@ -340,16 +340,6 @@ export const RakumachiImporter = ({
         <h3 className="breakdown-title">楽待URLから入力</h3>
         <div className="header-actions">
           <span className="breakdown-pill">AI補完</span>
-          {result ? (
-            <button
-              type="button"
-              className="section-toggle"
-              data-open={showDetails}
-              onClick={() => setShowDetails((prev) => !prev)}
-            >
-              {showDetails ? "詳細を隠す" : "詳細を表示"}
-            </button>
-          ) : null}
         </div>
       </div>
       <div className={`import-body${showDetails ? "" : " compact"}`}>
