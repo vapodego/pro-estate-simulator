@@ -425,6 +425,11 @@ export default function Home() {
     setFormVersion((prev) => prev + 1);
   };
 
+  const handleImportClear = () => {
+    setImportHistory([]);
+    setSelectedImportId(null);
+  };
+
   const handleFieldTouch = (key: keyof PropertyInput) => {
     setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
   };
@@ -1753,6 +1758,7 @@ export default function Home() {
             history={importHistory}
             selectedHistoryId={selectedImportId}
             onSelectHistory={handleImportSelect}
+            onClearHistory={handleImportClear}
           />
           <SimulationForm
             key={formVersion}

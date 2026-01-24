@@ -139,6 +139,7 @@ type Props = {
   history?: ImportHistoryItem[];
   selectedHistoryId?: string | null;
   onSelectHistory?: (id: string) => void;
+  onClearHistory?: () => void;
 };
 
 export const RakumachiImporter = ({
@@ -147,6 +148,7 @@ export const RakumachiImporter = ({
   history = [],
   selectedHistoryId = null,
   onSelectHistory,
+  onClearHistory,
 }: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -363,28 +365,37 @@ export const RakumachiImporter = ({
           </button>
         </div>
         {history.length > 0 ? (
-          <div className="import-history">
-            {history.map((item) => {
-              const label = item.listing?.title ?? item.listing?.propertyType ?? "物件";
-              const isActive = selectedHistoryId === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`import-history-item${isActive ? " active" : ""}`}
-                  onClick={() => {
-                    setShowDetails(false);
-                    onSelectHistory?.(item.id);
-                  }}
-                  title={item.url}
-                >
-                  {item.listing?.propertyType ? (
-                    <span className="import-history-chip">{item.listing.propertyType}</span>
-                  ) : null}
-                  <span className="import-history-title">{label}</span>
-                </button>
-              );
-            })}
+          <div className="import-history-row">
+            <div className="import-history">
+              {history.map((item) => {
+                const label = item.listing?.title ?? item.listing?.propertyType ?? "物件";
+                const isActive = selectedHistoryId === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`import-history-item${isActive ? " active" : ""}`}
+                    onClick={() => {
+                      setShowDetails(false);
+                      onSelectHistory?.(item.id);
+                    }}
+                    title={item.url}
+                  >
+                    {item.listing?.propertyType ? (
+                      <span className="import-history-chip">{item.listing.propertyType}</span>
+                    ) : null}
+                    <span className="import-history-title">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="import-history-clear"
+              onClick={() => onClearHistory?.()}
+            >
+              履歴を削除
+            </button>
           </div>
         ) : null}
         {listingToShow?.title ||

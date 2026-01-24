@@ -248,6 +248,29 @@ a {
   padding-bottom: 2px;
 }
 
+.import-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.import-history-clear {
+  border-radius: 999px;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  background: #fff;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.import-history-clear:hover {
+  border-color: rgba(15, 118, 110, 0.4);
+  color: var(--accent);
+}
+
 .import-history-item {
   display: inline-flex;
   align-items: center;
