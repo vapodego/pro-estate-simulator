@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PropertyInput, StructureType } from "../utils/types";
 import {
   getSuggestedBuildingRatio,
@@ -141,6 +141,7 @@ type Props = {
   onSelectHistory?: (id: string) => void;
   onClearHistory?: () => void;
   highlightStep2?: boolean;
+  onResultChange?: (hasResult: boolean) => void;
 };
 
 export const RakumachiImporter = ({
@@ -151,6 +152,7 @@ export const RakumachiImporter = ({
   onSelectHistory,
   onClearHistory,
   highlightStep2 = false,
+  onResultChange,
 }: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -172,6 +174,10 @@ export const RakumachiImporter = ({
       buildingRatio: toDefault(currentInput.buildingRatio),
     };
   }, [currentInput]);
+
+  useEffect(() => {
+    onResultChange?.(Boolean(result));
+  }, [result, onResultChange]);
 
   const sourceCounts = useMemo(() => {
     const counts = { extracted: 0, inferred: 0, missing: 0 };

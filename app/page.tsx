@@ -224,6 +224,7 @@ export default function Home() {
   const [autoFilledKeys, setAutoFilledKeys] = useState<(keyof PropertyInput)[]>([]);
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
+  const [hasImportResult, setHasImportResult] = useState(false);
   const [hasUserAdjusted, setHasUserAdjusted] = useState(false);
   const [hasViewedResults, setHasViewedResults] = useState(false);
   const [selectedYear, setSelectedYear] = useState(1);
@@ -416,7 +417,7 @@ export default function Home() {
       });
       setSelectedImportId(id);
     }
-    setHasUserAdjusted(false);
+    setHasUserAdjusted(true);
     setHasViewedResults(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
@@ -441,6 +442,14 @@ export default function Home() {
     setHasViewedResults(false);
   };
 
+  const handleImportResultChange = (hasResult: boolean) => {
+    setHasImportResult(hasResult);
+    if (!hasResult) {
+      setHasUserAdjusted(false);
+      setHasViewedResults(false);
+    }
+  };
+
   const selectedImport = useMemo(
     () => (selectedImportId ? importHistory.find((item) => item.id === selectedImportId) ?? null : null),
     [importHistory, selectedImportId]
@@ -452,11 +461,11 @@ export default function Home() {
   };
 
   const currentStep = useMemo(() => {
-    if (importHistory.length === 0) return 1;
+    if (!hasImportResult) return 1;
     if (!hasUserAdjusted) return 2;
     if (!hasViewedResults) return 3;
     return 4;
-  }, [importHistory.length, hasUserAdjusted, hasViewedResults]);
+  }, [hasImportResult, hasUserAdjusted, hasViewedResults]);
 
   useEffect(() => {
     const element = resultsRef.current;
@@ -1819,6 +1828,7 @@ export default function Home() {
           onSelectHistory={handleImportSelect}
           onClearHistory={handleImportClear}
           highlightStep2={currentStep === 2}
+          onResultChange={handleImportResultChange}
         />
       </div>
 
