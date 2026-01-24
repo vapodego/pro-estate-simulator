@@ -1784,6 +1784,9 @@ export default function Home() {
       </div>
 
       <section className="sheet">
+        <div className="sheet-head">
+          <span className="sheet-badge">シミュレーション結果</span>
+        </div>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext
