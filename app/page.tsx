@@ -236,6 +236,7 @@ export default function Home() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiContextKey, setAiContextKey] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -501,6 +502,12 @@ export default function Home() {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!hasViewedResults) {
+      setAiOpen(false);
+    }
+  }, [hasViewedResults]);
 
   const handleAskAi = async (event: FormEvent) => {
     event.preventDefault();
@@ -2008,40 +2015,6 @@ export default function Home() {
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
       <section className="sheet" ref={resultsRef}>
-        {hasViewedResults ? (
-          <div className="sheet-card ai-card">
-            <div className="ai-head">
-              <h3 className="table-title">AIコメント</h3>
-              {aiLoading ? <span className="ai-status">生成中...</span> : null}
-            </div>
-            <div className="ai-messages">
-              {aiMessages.length === 0 && !aiLoading ? (
-                <div className="form-note">AIコメントを生成中です。</div>
-              ) : null}
-              {aiMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={`ai-message ${message.role}`}
-                >
-                  {message.content}
-                </div>
-              ))}
-            </div>
-            {aiError ? <div className="auth-error">{aiError}</div> : null}
-            <form className="ai-input-row" onSubmit={handleAskAi}>
-              <input
-                type="text"
-                placeholder="AIに質問する"
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                disabled={aiLoading}
-              />
-              <button type="submit" className="section-toggle" disabled={aiLoading}>
-                送信
-              </button>
-            </form>
-          </div>
-        ) : null}
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext
@@ -2076,6 +2049,62 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {hasViewedResults ? (
+        <>
+          <button
+            type="button"
+            className="ai-float-button"
+            onClick={() => setAiOpen((prev) => !prev)}
+            aria-expanded={aiOpen}
+          >
+            AIチャット
+          </button>
+          {aiOpen ? (
+            <div className="ai-float-panel" role="dialog" aria-label="AIチャット">
+              <div className="ai-head">
+                <h3 className="table-title">AIコメント</h3>
+                <div className="ai-head-actions">
+                  {aiLoading ? <span className="ai-status">生成中...</span> : null}
+                  <button
+                    type="button"
+                    className="section-toggle"
+                    onClick={() => setAiOpen(false)}
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
+              <div className="ai-messages">
+                {aiMessages.length === 0 && !aiLoading ? (
+                  <div className="form-note">AIコメントを生成中です。</div>
+                ) : null}
+                {aiMessages.map((message, index) => (
+                  <div
+                    key={`${message.role}-${index}`}
+                    className={`ai-message ${message.role}`}
+                  >
+                    {message.content}
+                  </div>
+                ))}
+              </div>
+              {aiError ? <div className="auth-error">{aiError}</div> : null}
+              <form className="ai-input-row" onSubmit={handleAskAi}>
+                <input
+                  type="text"
+                  placeholder="AIに質問する"
+                  value={aiInput}
+                  onChange={(e) => setAiInput(e.target.value)}
+                  disabled={aiLoading}
+                />
+                <button type="submit" className="section-toggle" disabled={aiLoading}>
+                  送信
+                </button>
+              </form>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </main>
   );
 }

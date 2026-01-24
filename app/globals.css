@@ -768,6 +768,50 @@ a {
   background: #fffdf5;
 }
 
+.ai-float-button {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  border-radius: 999px;
+  padding: 10px 14px;
+  border: 1px solid rgba(15, 118, 110, 0.3);
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: 0 10px 20px rgba(12, 15, 20, 0.15);
+  cursor: pointer;
+}
+
+.ai-float-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 74px;
+  z-index: 40;
+  width: min(360px, calc(100vw - 40px));
+  max-height: 60vh;
+  overflow: hidden;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fffdf5;
+  box-shadow: 0 16px 30px rgba(12, 15, 20, 0.22);
+}
+
+.ai-float-panel .ai-messages {
+  max-height: 36vh;
+  overflow-y: auto;
+}
+
+.ai-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .form-card {
   background: #fffdf5;
 }
