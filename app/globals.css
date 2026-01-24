@@ -580,7 +580,7 @@ a {
 .form-panel-stack {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
   flex: 0 0 360px;
 }
 
