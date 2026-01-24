@@ -355,6 +355,10 @@ a {
   color: var(--ink-3);
 }
 
+.listing-inline {
+  margin-bottom: 10px;
+}
+
 .listing-url {
   font-size: 10px;
   color: rgba(15, 118, 110, 0.9);

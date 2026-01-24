@@ -530,42 +530,6 @@ export const SimulationForm: React.FC<Props> = ({
       {isCollapsed ? null : (
         <div className="form-scroll">
           <div className="form-row">
-            {listing ? (
-              <div className="form-panel listing-panel">
-                <div className="import-listing listing-panel-card">
-                  {listingImageSrc && !listingImageError ? (
-                    <img
-                      src={listingImageSrc}
-                      alt="物件写真"
-                      loading="lazy"
-                      onError={() => setListingImageError(true)}
-                    />
-                  ) : (
-                    <div className="listing-placeholder">No Image</div>
-                  )}
-                  <div className="listing-meta">
-                    {listing.propertyType ? (
-                      <span className="listing-chip">{listing.propertyType}</span>
-                    ) : null}
-                    {listing.title ? <div className="listing-title">{listing.title}</div> : null}
-                    {listing.address ? (
-                      <div className="listing-address">{listing.address}</div>
-                    ) : null}
-                    {listingUrl ? (
-                      <a
-                        className="listing-url"
-                        href={listingUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={listingUrl}
-                      >
-                        {listingUrlLabel}
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ) : null}
             {/* --- 1. 基本情報セクション --- */}
             <div className="form-section form-panel">
               <div className="form-panel-head">
@@ -581,6 +545,40 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.basic ? (
                 <>
+                  {listing ? (
+                    <div className="import-listing listing-inline">
+                      {listingImageSrc && !listingImageError ? (
+                        <img
+                          src={listingImageSrc}
+                          alt="物件写真"
+                          loading="lazy"
+                          onError={() => setListingImageError(true)}
+                        />
+                      ) : (
+                        <div className="listing-placeholder">No Image</div>
+                      )}
+                      <div className="listing-meta">
+                        {listing.propertyType ? (
+                          <span className="listing-chip">{listing.propertyType}</span>
+                        ) : null}
+                        {listing.title ? <div className="listing-title">{listing.title}</div> : null}
+                        {listing.address ? (
+                          <div className="listing-address">{listing.address}</div>
+                        ) : null}
+                        {listingUrl ? (
+                          <a
+                            className="listing-url"
+                            href={listingUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={listingUrl}
+                          >
+                            {listingUrlLabel}
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="form-grid two-col">
                     <div>
                       <label>物件価格 (建物+土地/万円)</label>
