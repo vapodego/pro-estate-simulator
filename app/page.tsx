@@ -1807,7 +1807,9 @@ export default function Home() {
         ].map((step) => (
           <div
             key={step.id}
-            className={`step-item${currentStep === step.id ? " active" : ""}`}
+            className={`step-item${currentStep === step.id ? " active" : ""}${
+              currentStep === step.id && step.id === 4 ? " no-pulse" : ""
+            }`}
           >
             <span className="step-index">Step {step.id}</span>
             <span className="step-text">{step.label}</span>
@@ -1854,7 +1856,7 @@ export default function Home() {
         <span className="step-pill">Step 4</span>
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
-      <section className={`sheet step-zone${currentStep === 4 ? " active" : ""}`} ref={resultsRef}>
+      <section className="sheet" ref={resultsRef}>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext

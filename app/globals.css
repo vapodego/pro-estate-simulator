@@ -316,6 +316,10 @@ a {
   animation: pulse-step 1.2s ease-in-out infinite;
 }
 
+.step-item.active.no-pulse {
+  animation: none;
+}
+
 .step-index {
   font-size: 12px;
   font-weight: 700;
