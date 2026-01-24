@@ -227,6 +227,7 @@ export default function Home() {
   const [hasImportResult, setHasImportResult] = useState(false);
   const [hasUserAdjusted, setHasUserAdjusted] = useState(false);
   const [hasViewedResults, setHasViewedResults] = useState(false);
+  const [hasCompletedSteps, setHasCompletedSteps] = useState(false);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -383,6 +384,7 @@ export default function Home() {
     setSelectedImportId(null);
     setHasUserAdjusted(false);
     setHasViewedResults(false);
+    setHasCompletedSteps(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -419,6 +421,7 @@ export default function Home() {
     }
     setHasUserAdjusted(true);
     setHasViewedResults(false);
+    setHasCompletedSteps(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -431,6 +434,7 @@ export default function Home() {
     setSelectedImportId(id);
     setHasUserAdjusted(false);
     setHasViewedResults(false);
+    setHasCompletedSteps(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -440,6 +444,7 @@ export default function Home() {
     setSelectedImportId(null);
     setHasUserAdjusted(false);
     setHasViewedResults(false);
+    setHasCompletedSteps(false);
   };
 
   const handleImportResultChange = (hasResult: boolean) => {
@@ -447,6 +452,7 @@ export default function Home() {
     if (!hasResult) {
       setHasUserAdjusted(false);
       setHasViewedResults(false);
+      setHasCompletedSteps(false);
     }
   };
 
@@ -466,6 +472,12 @@ export default function Home() {
     if (!hasViewedResults) return 3;
     return 4;
   }, [hasImportResult, hasUserAdjusted, hasViewedResults]);
+
+  useEffect(() => {
+    if (currentStep === 4) {
+      setHasCompletedSteps(true);
+    }
+  }, [currentStep]);
 
   useEffect(() => {
     const element = resultsRef.current;
@@ -1808,7 +1820,7 @@ export default function Home() {
           <div
             key={step.id}
             className={`step-item${currentStep === step.id ? " active" : ""}${
-              currentStep === step.id && step.id === 4 ? " no-pulse" : ""
+              currentStep === step.id && (step.id === 4 || hasCompletedSteps) ? " no-pulse" : ""
             }`}
           >
             <span className="step-index">Step {step.id}</span>
@@ -1823,7 +1835,7 @@ export default function Home() {
       </div>
       <div
         className={`top-import step-zone${
-          currentStep === 1 || currentStep === 2 ? " active" : ""
+          !hasCompletedSteps && (currentStep === 1 || currentStep === 2) ? " active" : ""
         }`}
       >
         <RakumachiImporter
@@ -1838,7 +1850,11 @@ export default function Home() {
         />
       </div>
 
-      <div className={`input-section step-zone${currentStep === 3 ? " active" : ""}`}>
+      <div
+        className={`input-section step-zone${
+          !hasCompletedSteps && currentStep === 3 ? " active" : ""
+        }`}
+      >
         <div className="input-section-head">
           <span className="step-pill">Step 3</span>
           <span className="input-section-badge">ユーザー入力</span>
