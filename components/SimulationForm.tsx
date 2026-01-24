@@ -531,115 +531,117 @@ export const SimulationForm: React.FC<Props> = ({
         <div className="form-scroll">
           <div className="form-row">
             {/* --- 1. 基本情報セクション --- */}
-            <div className="form-section form-panel">
-              <div className="form-panel-head">
-                <h3 className="form-section-title">基本情報</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("basic")}
-                  aria-expanded={openPanels.basic}
-                >
-                  {openPanels.basic ? "▼ 閉じる" : "▶ 開く"}
-                </button>
-              </div>
-              {openPanels.basic ? (
-                <>
-                  {listing ? (
-                    <div className="import-listing listing-inline">
-                      {listingImageSrc && !listingImageError ? (
-                        <img
-                          src={listingImageSrc}
-                          alt="物件写真"
-                          loading="lazy"
-                          onError={() => setListingImageError(true)}
+            <div className="form-panel-stack">
+              {listing ? (
+                <div className="import-listing listing-card">
+                  {listingImageSrc && !listingImageError ? (
+                    <img
+                      src={listingImageSrc}
+                      alt="物件写真"
+                      loading="lazy"
+                      onError={() => setListingImageError(true)}
+                    />
+                  ) : (
+                    <div className="listing-placeholder">No Image</div>
+                  )}
+                  <div className="listing-meta">
+                    {listing.propertyType ? (
+                      <span className="listing-chip">{listing.propertyType}</span>
+                    ) : null}
+                    {listing.title ? <div className="listing-title">{listing.title}</div> : null}
+                    {listing.address ? (
+                      <div className="listing-address">{listing.address}</div>
+                    ) : null}
+                    {listingUrl ? (
+                      <a
+                        className="listing-url"
+                        href={listingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={listingUrl}
+                      >
+                        {listingUrlLabel}
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              <div className="form-section form-panel">
+                <div className="form-panel-head">
+                  <h3 className="form-section-title">基本情報</h3>
+                  <button
+                    type="button"
+                    className="section-toggle"
+                    onClick={() => togglePanel("basic")}
+                    aria-expanded={openPanels.basic}
+                  >
+                    {openPanels.basic ? "▼ 閉じる" : "▶ 開く"}
+                  </button>
+                </div>
+                {openPanels.basic ? (
+                  <>
+                    <div className="form-grid two-col">
+                      <div>
+                        <label>物件価格 (建物+土地/万円)</label>
+                        <input
+                          type="number"
+                          value={displayValue(formData.price, 10000)} // 表示は万円単位
+                          onChange={(e) => handleChange("price", Number(e.target.value) * 10000)}
                         />
-                      ) : (
-                        <div className="listing-placeholder">No Image</div>
-                      )}
-                      <div className="listing-meta">
-                        {listing.propertyType ? (
-                          <span className="listing-chip">{listing.propertyType}</span>
-                        ) : null}
-                        {listing.title ? <div className="listing-title">{listing.title}</div> : null}
-                        {listing.address ? (
-                          <div className="listing-address">{listing.address}</div>
-                        ) : null}
-                        {listingUrl ? (
-                          <a
-                            className="listing-url"
-                            href={listingUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={listingUrl}
-                          >
-                            {listingUrlLabel}
-                          </a>
+                      </div>
+                      <div>
+                        {renderLabel("建物比率 (%)", "buildingRatio")}
+                        <input
+                          type="number"
+                          value={displayPercent(formData.buildingRatio)}
+                          className={isAutoFilled("buildingRatio") ? "auto-input" : undefined}
+                          onChange={(e) => handleBuildingRatioChange(Number(e.target.value))}
+                        />
+                        {!isPristine && formData.price > 0 && formData.buildingRatio > 0 ? (
+                          <p className="form-note">
+                            建物価格:{" "}
+                            {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
+                          </p>
                         ) : null}
                       </div>
                     </div>
-                  ) : null}
-                  <div className="form-grid two-col">
-                    <div>
-                      <label>物件価格 (建物+土地/万円)</label>
-                      <input
-                        type="number"
-                        value={displayValue(formData.price, 10000)} // 表示は万円単位
-                        onChange={(e) => handleChange("price", Number(e.target.value) * 10000)}
-                      />
-                    </div>
-                    <div>
-                      {renderLabel("建物比率 (%)", "buildingRatio")}
-                      <input
-                        type="number"
-                        value={displayPercent(formData.buildingRatio)}
-                        className={isAutoFilled("buildingRatio") ? "auto-input" : undefined}
-                        onChange={(e) => handleBuildingRatioChange(Number(e.target.value))}
-                      />
-                      {!isPristine && formData.price > 0 && formData.buildingRatio > 0 ? (
-                        <p className="form-note">
-                          建物価格:{" "}
-                          {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
 
-                  <div className="form-grid two-col">
-                    <div>
-                      <label>構造</label>
-                      <select
-                        value={isPristine ? "" : formData.structure}
-                        onChange={(e) => {
-                          const value = e.target.value as StructureType;
-                          if (!value) return;
-                          handleStructureChange(value);
-                        }}
-                      >
-                        <option value="" disabled>
-                          選択
-                        </option>
-                        {STRUCTURE_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
+                    <div className="form-grid two-col">
+                      <div>
+                        <label>構造</label>
+                        <select
+                          value={isPristine ? "" : formData.structure}
+                          onChange={(e) => {
+                            const value = e.target.value as StructureType;
+                            if (!value) return;
+                            handleStructureChange(value);
+                          }}
+                        >
+                          <option value="" disabled>
+                            選択
                           </option>
-                        ))}
-                      </select>
-                      {!isPristine ? (
-                        <p className="form-note">法定耐用年数: {legalLife} 年</p>
-                      ) : null}
+                          {STRUCTURE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        {!isPristine ? (
+                          <p className="form-note">法定耐用年数: {legalLife} 年</p>
+                        ) : null}
+                      </div>
+                      <div>
+                        <label>築年数 (年)</label>
+                        <input
+                          type="number"
+                          value={displayValue(formData.buildingAge)}
+                          onChange={(e) => handleBuildingAgeChange(Number(e.target.value))}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label>築年数 (年)</label>
-                      <input
-                        type="number"
-                        value={displayValue(formData.buildingAge)}
-                        onChange={(e) => handleBuildingAgeChange(Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                </>
-              ) : null}
+                  </>
+                ) : null}
+              </div>
             </div>
 
             {/* --- 2. 融資・収支セクション --- */}

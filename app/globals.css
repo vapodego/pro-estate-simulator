@@ -355,10 +355,6 @@ a {
   color: var(--ink-3);
 }
 
-.listing-inline {
-  margin-bottom: 10px;
-}
-
 .listing-url {
   font-size: 10px;
   color: rgba(15, 118, 110, 0.9);
@@ -581,11 +577,19 @@ a {
   flex: 0 0 360px;
 }
 
-.listing-panel {
-  flex: 0 0 280px;
+.form-panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 360px;
 }
 
-.listing-panel-card {
+.form-panel-stack .form-panel {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.listing-card {
   width: 100%;
 }
 
