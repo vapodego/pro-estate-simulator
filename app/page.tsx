@@ -502,37 +502,6 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!hasViewedResults) return;
-    if (aiContextKey === aiSummaryKey) return;
-    setAiContextKey(aiSummaryKey);
-    setAiMessages([]);
-    setAiInput("");
-    setAiError(null);
-    setAiLoading(true);
-    fetch("/api/ai-comment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summary: aiSummary }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload?.error ?? "AIコメントの取得に失敗しました。");
-        }
-        const message = typeof payload?.message === "string" ? payload.message : "";
-        if (message) {
-          setAiMessages([{ role: "assistant", content: message }]);
-        }
-      })
-      .catch((error) => {
-        setAiError(error instanceof Error ? error.message : "AIコメントの取得に失敗しました。");
-      })
-      .finally(() => {
-        setAiLoading(false);
-      });
-  }, [hasViewedResults, aiContextKey, aiSummaryKey, aiSummary]);
-
   const handleAskAi = async (event: FormEvent) => {
     event.preventDefault();
     if (!aiInput.trim() || aiLoading) return;
@@ -734,6 +703,38 @@ export default function Home() {
     }
     return `${hash}`;
   }, [aiSummary]);
+
+  useEffect(() => {
+    if (!hasViewedResults) return;
+    if (aiContextKey === aiSummaryKey) return;
+    setAiContextKey(aiSummaryKey);
+    setAiMessages([]);
+    setAiInput("");
+    setAiError(null);
+    setAiLoading(true);
+    fetch("/api/ai-comment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: aiSummary }),
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "AIコメントの取得に失敗しました。");
+        }
+        const message = typeof payload?.message === "string" ? payload.message : "";
+        if (message) {
+          setAiMessages([{ role: "assistant", content: message }]);
+        }
+      })
+      .catch((error) => {
+        setAiError(error instanceof Error ? error.message : "AIコメントの取得に失敗しました。");
+      })
+      .finally(() => {
+        setAiLoading(false);
+      });
+  }, [hasViewedResults, aiContextKey, aiSummaryKey, aiSummary]);
+
   const stressExit =
     inputData.exitEnabled && stressResults
       ? (() => {
