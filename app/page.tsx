@@ -1821,7 +1821,11 @@ export default function Home() {
         <span className="step-pill">Step 1</span>
         <span className="step-title">URL入力</span>
       </div>
-      <div className={`top-import step-zone${currentStep === 1 ? " active" : ""}`}>
+      <div
+        className={`top-import step-zone${
+          currentStep === 1 || currentStep === 2 ? " active" : ""
+        }`}
+      >
         <RakumachiImporter
           currentInput={inputData}
           onApply={handleImportApply}
