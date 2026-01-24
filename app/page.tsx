@@ -1783,10 +1783,10 @@ export default function Home() {
         </div>
       </div>
 
+      <div className="input-section-head output-section-head">
+        <span className="input-section-badge">シミュレーション結果</span>
+      </div>
       <section className="sheet">
-        <div className="sheet-head">
-          <span className="sheet-badge">シミュレーション結果</span>
-        </div>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext
