@@ -27,7 +27,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { SimulationForm } from "../components/SimulationForm";
 import { SimulationChart } from "../components/SimulationChart";
 import { DscrChart } from "../components/DscrChart";
-import { RakumachiImporter } from "../components/RakumachiImporter";
+import { RakumachiImporter, ImportHistoryItem } from "../components/RakumachiImporter";
 import { calculateNPV, calculateIRR } from "../utils/finance";
 import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils/simulation";
 import { PropertyInput, ScenarioConfig, YearlyResult } from "../utils/types";
@@ -222,6 +222,8 @@ const formatFirebaseError = (error: unknown, fallback: string) => {
 export default function Home() {
   const [inputData, setInputData] = useState<PropertyInput>(DEFAULT_INPUT);
   const [autoFilledKeys, setAutoFilledKeys] = useState<(keyof PropertyInput)[]>([]);
+  const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
+  const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -374,15 +376,51 @@ export default function Home() {
   const handleLoad = (item: SavedSimulation) => {
     setInputData({ ...DEFAULT_INPUT, ...item.input });
     setAutoFilledKeys([]);
+    setSelectedImportId(null);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
 
-  const handleImportApply = (patch: Partial<PropertyInput>) => {
-    const merged = { ...inputData, ...patch };
+  const handleImportApply = (payload: {
+    patch: Partial<PropertyInput>;
+    listing: ImportHistoryItem["listing"];
+    url: string;
+  }) => {
+    const merged = { ...inputData, ...payload.patch };
     const { data, autoFilled } = applyEstimatedDefaultsWithMeta(merged);
     setInputData(data);
     setAutoFilledKeys(autoFilled);
+    if (payload.url) {
+      const id = payload.url;
+      setImportHistory((prev) => {
+        const nextItem: ImportHistoryItem = {
+          id,
+          url: payload.url,
+          listing: payload.listing ?? null,
+          input: data,
+          autoFilled,
+          createdAt: Date.now(),
+        };
+        const existingIndex = prev.findIndex((item) => item.id === id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next.splice(existingIndex, 1, nextItem);
+          return next;
+        }
+        return [nextItem, ...prev].slice(0, 5);
+      });
+      setSelectedImportId(id);
+    }
+    setSelectedYear(1);
+    setFormVersion((prev) => prev + 1);
+  };
+
+  const handleImportSelect = (id: string) => {
+    const item = importHistory.find((entry) => entry.id === id);
+    if (!item) return;
+    setInputData(item.input);
+    setAutoFilledKeys(item.autoFilled);
+    setSelectedImportId(id);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -1709,7 +1747,13 @@ export default function Home() {
 
       <section className="sheet">
         <div className="sheet-top">
-          <RakumachiImporter currentInput={inputData} onApply={handleImportApply} />
+          <RakumachiImporter
+            currentInput={inputData}
+            onApply={handleImportApply}
+            history={importHistory}
+            selectedHistoryId={selectedImportId}
+            onSelectHistory={handleImportSelect}
+          />
           <SimulationForm
             key={formVersion}
             initialData={inputData}

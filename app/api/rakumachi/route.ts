@@ -10,6 +10,13 @@ type ImportField = {
   note?: string;
 };
 
+type ListingPreview = {
+  title: string | null;
+  propertyType: string | null;
+  address: string | null;
+  imageUrl: string | null;
+};
+
 const GEMINI_MODEL = "gemini-3-flash-preview";
 const truncate = (value: string, max = 500) =>
   value.length > max ? `${value.slice(0, max)}...` : value;
@@ -21,6 +28,69 @@ const stripHtml = (html: string) =>
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+const decodeHtml = (value: string) =>
+  value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+
+const extractMeta = (html: string, key: string) => {
+  const regex = new RegExp(
+    `<meta[^>]+(?:property|name)=[\"']${key}[\"'][^>]+content=[\"']([^\"']+)[\"']`,
+    "i"
+  );
+  const match = html.match(regex);
+  return match?.[1] ? decodeHtml(match[1]).trim() : null;
+};
+
+const extractTitle = (html: string) => {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return match?.[1] ? decodeHtml(match[1]).trim() : null;
+};
+
+const extractJsonLdImages = (html: string) => {
+  const urls: string[] = [];
+  const regex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html)) !== null) {
+    const raw = match[1]?.trim();
+    if (!raw) continue;
+    try {
+      const data = JSON.parse(raw);
+      const nodes = Array.isArray(data) ? data : [data];
+      nodes.forEach((node) => {
+        const image = node?.image;
+        if (typeof image === "string") urls.push(image);
+        if (Array.isArray(image)) {
+          image.forEach((entry) => {
+            if (typeof entry === "string") urls.push(entry);
+          });
+        }
+        const primaryImage = node?.primaryImageOfPage?.contentUrl;
+        if (typeof primaryImage === "string") urls.push(primaryImage);
+      });
+    } catch {
+      continue;
+    }
+  }
+  return urls;
+};
+
+const extractImageFromHtml = (html: string) => {
+  const urls: string[] = [];
+  const imgRegex = /<img[^>]+(?:data-src|data-original|src)=["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = imgRegex.exec(html)) !== null) {
+    const url = match[1]?.trim();
+    if (!url) continue;
+    if (!/\.(jpg|jpeg|png|webp)(\?|#|$)/i.test(url)) continue;
+    urls.push(decodeHtml(url));
+  }
+  return urls;
+};
 
 const extractJson = (text: string) => {
   const start = text.indexOf("{");
@@ -60,6 +130,20 @@ export async function POST(request: Request) {
       );
     }
     const html = await res.text();
+    const metaTitle = extractMeta(html, "og:title") || extractMeta(html, "twitter:title");
+    const metaImage = extractMeta(html, "og:image") || extractMeta(html, "twitter:image");
+    const titleTag = extractTitle(html);
+    const listingTitle = metaTitle || titleTag;
+    const jsonLdImages = extractJsonLdImages(html);
+    const htmlImages = extractImageFromHtml(html);
+    const rawImageUrl =
+      metaImage ||
+      jsonLdImages.find((url) => Boolean(url)) ||
+      htmlImages.find((url) => Boolean(url)) ||
+      null;
+    const listingImageUrl = rawImageUrl
+      ? new URL(rawImageUrl, targetUrl.origin).toString()
+      : null;
     const text = stripHtml(html).slice(0, 40000);
 
     const prompt = `
@@ -78,6 +162,7 @@ export async function POST(request: Request) {
     "structure": { "value": "RC|SRC|S_HEAVY|S_LIGHT|WOOD"|null, "source": "...", "note": string? },
     "floorAreaSqm": { "value": number|null, "source": "...", "note": string? },
     "landAreaSqm": { "value": number|null, "source": "...", "note": string? },
+    "propertyName": { "value": string|null, "source": "...", "note": string? },
     "propertyType": { "value": string|null, "source": "...", "note": string? },
     "address": { "value": string|null, "source": "...", "note": string? }
   }
@@ -144,7 +229,19 @@ ${text}
         { status: 502 }
       );
     }
-    return NextResponse.json({ fields: parsed.fields ?? {} });
+    const addressValue = parsed.fields?.address?.value;
+    const propertyNameValue = parsed.fields?.propertyName?.value;
+    const propertyTypeValue = parsed.fields?.propertyType?.value;
+    const listing: ListingPreview = {
+      title:
+        typeof propertyNameValue === "string"
+          ? propertyNameValue
+          : listingTitle ?? null,
+      propertyType: typeof propertyTypeValue === "string" ? propertyTypeValue : null,
+      address: typeof addressValue === "string" ? addressValue : null,
+      imageUrl: listingImageUrl,
+    };
+    return NextResponse.json({ fields: parsed.fields ?? {}, listing });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "解析に失敗しました。" },

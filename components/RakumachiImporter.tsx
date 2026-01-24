@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PropertyInput, StructureType } from "../utils/types";
 import {
   getSuggestedBuildingRatio,
@@ -20,7 +20,24 @@ type ImportField = {
 
 type ImportResponse = {
   fields: Record<string, ImportField>;
+  listing?: {
+    title: string | null;
+    propertyType: string | null;
+    address: string | null;
+    imageUrl: string | null;
+  };
   warnings?: string[];
+};
+
+export type ListingPreview = NonNullable<ImportResponse["listing"]>;
+
+export type ImportHistoryItem = {
+  id: string;
+  url: string;
+  listing: ListingPreview | null;
+  input: PropertyInput;
+  autoFilled: (keyof PropertyInput)[];
+  createdAt: number;
 };
 
 type FieldConfig = {
@@ -118,10 +135,19 @@ const normalizeFields = (fields: Record<string, ImportField>) => {
 
 type Props = {
   currentInput: PropertyInput;
-  onApply: (patch: Partial<PropertyInput>) => void;
+  onApply: (payload: { patch: Partial<PropertyInput>; listing: ListingPreview | null; url: string }) => void;
+  history?: ImportHistoryItem[];
+  selectedHistoryId?: string | null;
+  onSelectHistory?: (id: string) => void;
 };
 
-export const RakumachiImporter = ({ currentInput, onApply }: Props) => {
+export const RakumachiImporter = ({
+  currentInput,
+  onApply,
+  history = [],
+  selectedHistoryId = null,
+  onSelectHistory,
+}: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +155,7 @@ export const RakumachiImporter = ({ currentInput, onApply }: Props) => {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   const manualDefaults = useMemo(() => {
     const toDefault = (value: number, scale = 1) =>
@@ -154,6 +181,24 @@ export const RakumachiImporter = ({ currentInput, onApply }: Props) => {
     });
     return counts;
   }, [result]);
+
+  const selectedItem = useMemo(
+    () => history.find((item) => item.id === selectedHistoryId) ?? null,
+    [history, selectedHistoryId]
+  );
+  const selectedListing = selectedItem?.listing ?? null;
+  const listingToShow = showDetails ? result?.listing ?? null : selectedListing ?? result?.listing ?? null;
+  const listingSourceUrl = showDetails ? url.trim() : selectedItem?.url ?? url.trim();
+  const imageSrc =
+    listingToShow?.imageUrl && listingSourceUrl
+      ? `/api/rakumachi-image?url=${encodeURIComponent(listingToShow.imageUrl)}&ref=${encodeURIComponent(
+          listingSourceUrl
+        )}`
+      : null;
+
+  useEffect(() => {
+    setImageError(false);
+  }, [listingToShow?.imageUrl, listingSourceUrl]);
 
   const getSuggestedManuals = (fields: Record<string, ImportField>) => {
     const price = Number(fields.priceYen?.value ?? currentInput.price ?? 0);
@@ -271,7 +316,7 @@ export const RakumachiImporter = ({ currentInput, onApply }: Props) => {
     });
 
     if (Object.keys(patch).length > 0) {
-      onApply(patch);
+      onApply({ patch, listing: result?.listing ?? null, url: url.trim() });
     }
     setCollapsed((prev) => ({ ...prev, extracted: true, manual: true }));
     setShowDetails(false);
@@ -307,6 +352,59 @@ export const RakumachiImporter = ({ currentInput, onApply }: Props) => {
             {loading ? "解析中..." : "解析"}
           </button>
         </div>
+        {history.length > 0 ? (
+          <div className="import-history">
+            {history.map((item) => {
+              const label = item.listing?.title ?? item.listing?.propertyType ?? "物件";
+              const isActive = selectedHistoryId === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`import-history-item${isActive ? " active" : ""}`}
+                  onClick={() => {
+                    setShowDetails(false);
+                    onSelectHistory?.(item.id);
+                  }}
+                  title={item.url}
+                >
+                  {item.listing?.propertyType ? (
+                    <span className="import-history-chip">{item.listing.propertyType}</span>
+                  ) : null}
+                  <span className="import-history-title">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {listingToShow?.title ||
+        listingToShow?.propertyType ||
+        listingToShow?.address ||
+        listingToShow?.imageUrl ? (
+          <div className="import-listing">
+            {imageSrc && !imageError ? (
+              <img
+                src={imageSrc}
+                alt="物件写真"
+                loading="lazy"
+                onError={() => setImageError(true)}
+              />
+            ) : (
+              <div className="listing-placeholder">No Image</div>
+            )}
+            <div className="listing-meta">
+              {listingToShow?.propertyType ? (
+                <span className="listing-chip">{listingToShow.propertyType}</span>
+              ) : null}
+              {listingToShow?.title ? (
+                <div className="listing-title">{listingToShow.title}</div>
+              ) : null}
+              {listingToShow?.address ? (
+                <div className="listing-address">{listingToShow.address}</div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {error ? <div className="auth-error">{error}</div> : null}
         {result && showDetails ? (
           <>
