@@ -215,8 +215,8 @@ a {
 }
 
 .step-zone.active {
-  box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.45);
-  animation: pulse-outline 1.8s ease-in-out infinite;
+  box-shadow: 0 0 0 3px rgba(243, 156, 18, 0.45);
+  animation: pulse-outline 1.2s ease-in-out infinite;
 }
 
 @keyframes pulse-outline {
@@ -225,13 +225,26 @@ a {
     box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.35);
   }
   50% {
-    box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.6);
+    box-shadow: 0 0 0 4px rgba(243, 156, 18, 0.65);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .step-zone.active {
     animation: none;
+  }
+  .step-item.active {
+    animation: none;
+  }
+}
+
+@keyframes pulse-step {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(243, 156, 18, 0.0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(243, 156, 18, 0.25);
   }
 }
 
@@ -298,6 +311,7 @@ a {
   border-color: rgba(243, 156, 18, 0.6);
   background: rgba(243, 156, 18, 0.18);
   color: #a14a00;
+  animation: pulse-step 1.2s ease-in-out infinite;
 }
 
 .step-index {
