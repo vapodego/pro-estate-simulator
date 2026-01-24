@@ -224,6 +224,8 @@ export default function Home() {
   const [autoFilledKeys, setAutoFilledKeys] = useState<(keyof PropertyInput)[]>([]);
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
+  const [hasUserAdjusted, setHasUserAdjusted] = useState(false);
+  const [hasViewedResults, setHasViewedResults] = useState(false);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -236,6 +238,7 @@ export default function Home() {
   const [leftOrder, setLeftOrder] = useState(DEFAULT_LEFT_ORDER);
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
+  const resultsRef = useRef<HTMLElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const saveMenuRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(
@@ -377,6 +380,8 @@ export default function Home() {
     setInputData({ ...DEFAULT_INPUT, ...item.input });
     setAutoFilledKeys([]);
     setSelectedImportId(null);
+    setHasUserAdjusted(false);
+    setHasViewedResults(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -411,6 +416,8 @@ export default function Home() {
       });
       setSelectedImportId(id);
     }
+    setHasUserAdjusted(false);
+    setHasViewedResults(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -421,6 +428,8 @@ export default function Home() {
     setInputData(item.input);
     setAutoFilledKeys(item.autoFilled);
     setSelectedImportId(id);
+    setHasUserAdjusted(false);
+    setHasViewedResults(false);
     setSelectedYear(1);
     setFormVersion((prev) => prev + 1);
   };
@@ -428,6 +437,8 @@ export default function Home() {
   const handleImportClear = () => {
     setImportHistory([]);
     setSelectedImportId(null);
+    setHasUserAdjusted(false);
+    setHasViewedResults(false);
   };
 
   const selectedImport = useMemo(
@@ -437,7 +448,30 @@ export default function Home() {
 
   const handleFieldTouch = (key: keyof PropertyInput) => {
     setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
+    setHasUserAdjusted(true);
   };
+
+  const currentStep = useMemo(() => {
+    if (importHistory.length === 0) return 1;
+    if (!hasUserAdjusted) return 2;
+    if (!hasViewedResults) return 3;
+    return 4;
+  }, [importHistory.length, hasUserAdjusted, hasViewedResults]);
+
+  useEffect(() => {
+    const element = resultsRef.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setHasViewedResults(true);
+        }
+      },
+      { threshold: 0.2 }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const scenarioConfig: ScenarioConfig = {
     interestRateShockEnabled: inputData.scenarioEnabled,
@@ -1755,6 +1789,27 @@ export default function Home() {
         </div>
       </header>
 
+      <div className="step-bar">
+        {[
+          { id: 1, label: "URL入力" },
+          { id: 2, label: "抽出確認" },
+          { id: 3, label: "入力調整" },
+          { id: 4, label: "結果を見る" },
+        ].map((step) => (
+          <div
+            key={step.id}
+            className={`step-item${currentStep === step.id ? " active" : ""}`}
+          >
+            <span className="step-index">Step {step.id}</span>
+            <span className="step-text">{step.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="step-head">
+        <span className="step-pill">Step 1</span>
+        <span className="step-title">URL入力</span>
+      </div>
       <div className="top-import">
         <RakumachiImporter
           currentInput={inputData}
@@ -1768,6 +1823,7 @@ export default function Home() {
 
       <div className="input-section">
         <div className="input-section-head">
+          <span className="step-pill">Step 3</span>
           <span className="input-section-badge">ユーザー入力</span>
         </div>
         <div className="sheet-top">
@@ -1784,9 +1840,10 @@ export default function Home() {
       </div>
 
       <div className="input-section-head output-section-head">
+        <span className="step-pill">Step 4</span>
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
-      <section className="sheet">
+      <section className="sheet" ref={resultsRef}>
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext

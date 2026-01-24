@@ -321,6 +321,10 @@ export const RakumachiImporter = ({
         </div>
         {history.length > 0 ? (
           <div className="import-history-row">
+            <div className="step-subhead">
+              <span className="step-pill">Step 2</span>
+              <span className="step-title">抽出確認</span>
+            </div>
             <div className="import-history">
               {history.map((item) => {
                 const label = item.listing?.title ?? item.listing?.propertyType ?? "物件";
