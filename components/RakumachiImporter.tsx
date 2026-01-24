@@ -307,12 +307,6 @@ export const RakumachiImporter = ({
 
   return (
     <div className="sheet-card import-card">
-      <div className="breakdown-head">
-        <h3 className="breakdown-title">楽待URLから入力</h3>
-        <div className="header-actions">
-          <span className="breakdown-pill">AI補完</span>
-        </div>
-      </div>
       <div className={`import-body${showDetails ? "" : " compact"}`}>
         <div className="import-row">
           <input
