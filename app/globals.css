@@ -332,6 +332,17 @@ a {
   color: var(--ink-3);
 }
 
+.listing-url {
+  font-size: 10px;
+  color: rgba(15, 118, 110, 0.9);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.listing-url:hover {
+  text-decoration: underline;
+}
+
 .import-section {
   border-top: 1px dashed rgba(15, 118, 110, 0.25);
   padding-top: 10px;

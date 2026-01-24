@@ -195,6 +195,16 @@ export const RakumachiImporter = ({
           listingSourceUrl
         )}`
       : null;
+  const listingUrlLabel = useMemo(() => {
+    if (!listingSourceUrl) return "";
+    try {
+      const parsed = new URL(listingSourceUrl);
+      const path = parsed.pathname.replace(/\/$/, "");
+      return `${parsed.hostname}${path}`;
+    } catch {
+      return listingSourceUrl;
+    }
+  }, [listingSourceUrl]);
 
   useEffect(() => {
     setImageError(false);
@@ -401,6 +411,17 @@ export const RakumachiImporter = ({
               ) : null}
               {listingToShow?.address ? (
                 <div className="listing-address">{listingToShow.address}</div>
+              ) : null}
+              {listingSourceUrl ? (
+                <a
+                  className="listing-url"
+                  href={listingSourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={listingSourceUrl}
+                >
+                  {listingUrlLabel}
+                </a>
               ) : null}
             </div>
           </div>
