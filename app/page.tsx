@@ -235,7 +235,6 @@ export default function Home() {
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiContextKey, setAiContextKey] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -694,46 +693,6 @@ export default function Home() {
     exitNpv,
     baseEquityMultiple,
   ]);
-
-  const aiSummaryKey = useMemo(() => {
-    const text = JSON.stringify(aiSummary);
-    let hash = 0;
-    for (let i = 0; i < text.length; i += 1) {
-      hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
-    }
-    return `${hash}`;
-  }, [aiSummary]);
-
-  useEffect(() => {
-    if (!hasViewedResults) return;
-    if (aiContextKey === aiSummaryKey) return;
-    setAiContextKey(aiSummaryKey);
-    setAiMessages([]);
-    setAiInput("");
-    setAiError(null);
-    setAiLoading(true);
-    fetch("/api/ai-comment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summary: aiSummary }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload?.error ?? "AIコメントの取得に失敗しました。");
-        }
-        const message = typeof payload?.message === "string" ? payload.message : "";
-        if (message) {
-          setAiMessages([{ role: "assistant", content: message }]);
-        }
-      })
-      .catch((error) => {
-        setAiError(error instanceof Error ? error.message : "AIコメントの取得に失敗しました。");
-      })
-      .finally(() => {
-        setAiLoading(false);
-      });
-  }, [hasViewedResults, aiContextKey, aiSummaryKey, aiSummary]);
 
   const stressExit =
     inputData.exitEnabled && stressResults
@@ -2051,9 +2010,7 @@ export default function Home() {
         <div className="ai-messages">
           {aiMessages.length === 0 && !aiLoading ? (
             <div className="form-note">
-              {hasViewedResults
-                ? "AIコメントを生成中です。"
-                : "Step4に到達すると自動コメントが生成されます。質問はいつでもOKです。"}
+              質問を入力してください。Step4到達後の結果を含めて回答します。
             </div>
           ) : null}
           {aiMessages.map((message, index) => (
