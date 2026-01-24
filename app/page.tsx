@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type FormEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -228,6 +229,13 @@ export default function Home() {
   const [hasUserAdjusted, setHasUserAdjusted] = useState(false);
   const [hasViewedResults, setHasViewedResults] = useState(false);
   const [hasCompletedSteps, setHasCompletedSteps] = useState(false);
+  const [aiMessages, setAiMessages] = useState<{ role: "user" | "assistant"; content: string }[]>(
+    []
+  );
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiContextKey, setAiContextKey] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -494,6 +502,66 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!hasViewedResults) return;
+    if (aiContextKey === aiSummaryKey) return;
+    setAiContextKey(aiSummaryKey);
+    setAiMessages([]);
+    setAiInput("");
+    setAiError(null);
+    setAiLoading(true);
+    fetch("/api/ai-comment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary: aiSummary }),
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "AIコメントの取得に失敗しました。");
+        }
+        const message = typeof payload?.message === "string" ? payload.message : "";
+        if (message) {
+          setAiMessages([{ role: "assistant", content: message }]);
+        }
+      })
+      .catch((error) => {
+        setAiError(error instanceof Error ? error.message : "AIコメントの取得に失敗しました。");
+      })
+      .finally(() => {
+        setAiLoading(false);
+      });
+  }, [hasViewedResults, aiContextKey, aiSummaryKey, aiSummary]);
+
+  const handleAskAi = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!aiInput.trim() || aiLoading) return;
+    const nextMessages = [...aiMessages, { role: "user", content: aiInput.trim() }];
+    setAiMessages(nextMessages);
+    setAiInput("");
+    setAiError(null);
+    setAiLoading(true);
+    try {
+      const response = await fetch("/api/ai-comment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: aiSummary, messages: nextMessages }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "AIの回答取得に失敗しました。");
+      }
+      const message = typeof payload?.message === "string" ? payload.message : "";
+      if (message) {
+        setAiMessages([...nextMessages, { role: "assistant", content: message }]);
+      }
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : "AIの回答取得に失敗しました。");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const scenarioConfig: ScenarioConfig = {
     interestRateShockEnabled: inputData.scenarioEnabled,
     interestRateShockYear: inputData.scenarioInterestShockYear,
@@ -604,6 +672,68 @@ export default function Home() {
   const baseEquityMultiple = inputData.exitEnabled && equity > 0
     ? exitCashFlows.slice(1).reduce((sum, cashFlow) => sum + cashFlow, 0) / equity
     : null;
+
+  const aiSummary = useMemo(() => {
+    const windowResults = results.slice(0, Math.min(results.length, 10));
+    const avgCashFlow =
+      windowResults.length > 0
+        ? Math.round(
+            windowResults.reduce((sum, result) => sum + result.cashFlowPostTax, 0) /
+              windowResults.length
+          )
+        : 0;
+    const minCashFlow =
+      results.length > 0
+        ? Math.min(...results.map((result) => result.cashFlowPostTax))
+        : 0;
+    const deadCrossYears = results.filter((result) => result.isDeadCross).map((result) => result.year);
+    return {
+      input: {
+        price: inputData.price,
+        loanAmount: inputData.loanAmount,
+        interestRate: inputData.interestRate,
+        loanDuration: inputData.loanDuration,
+        monthlyRent: inputData.monthlyRent,
+        occupancyRate: inputData.occupancyRate,
+        rentDeclineRate: inputData.rentDeclineRate,
+        operatingExpenseRate: inputData.operatingExpenseRate,
+        structure: inputData.structure,
+        buildingAge: inputData.buildingAge,
+      },
+      performance: {
+        avgCashFlow,
+        minCashFlow,
+        deadCrossYears,
+      },
+      exit: inputData.exitEnabled
+        ? {
+            exitYear,
+            exitCapRate: inputData.exitCapRate,
+            netProceeds: exitNetProceeds,
+            irr: exitIrr,
+            npv: exitNpv,
+            equityMultiple: baseEquityMultiple,
+          }
+        : null,
+    };
+  }, [
+    results,
+    inputData,
+    exitYear,
+    exitNetProceeds,
+    exitIrr,
+    exitNpv,
+    baseEquityMultiple,
+  ]);
+
+  const aiSummaryKey = useMemo(() => {
+    const text = JSON.stringify(aiSummary);
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
+    }
+    return `${hash}`;
+  }, [aiSummary]);
   const stressExit =
     inputData.exitEnabled && stressResults
       ? (() => {
@@ -1877,6 +2007,40 @@ export default function Home() {
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
       <section className="sheet" ref={resultsRef}>
+        {hasViewedResults ? (
+          <div className="sheet-card ai-card">
+            <div className="ai-head">
+              <h3 className="table-title">AIコメント</h3>
+              {aiLoading ? <span className="ai-status">生成中...</span> : null}
+            </div>
+            <div className="ai-messages">
+              {aiMessages.length === 0 && !aiLoading ? (
+                <div className="form-note">AIコメントを生成中です。</div>
+              ) : null}
+              {aiMessages.map((message, index) => (
+                <div
+                  key={`${message.role}-${index}`}
+                  className={`ai-message ${message.role}`}
+                >
+                  {message.content}
+                </div>
+              ))}
+            </div>
+            {aiError ? <div className="auth-error">{aiError}</div> : null}
+            <form className="ai-input-row" onSubmit={handleAskAi}>
+              <input
+                type="text"
+                placeholder="AIに質問する"
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                disabled={aiLoading}
+              />
+              <button type="submit" className="section-toggle" disabled={aiLoading}>
+                送信
+              </button>
+            </form>
+          </div>
+        ) : null}
         <div className="sheet-grid">
           <div className="sheet-sidebar">
             <DndContext

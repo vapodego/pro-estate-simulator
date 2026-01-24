@@ -714,6 +714,60 @@ a {
   margin-top: 16px;
 }
 
+.ai-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-status {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.ai-messages {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-message {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #f8f4ec;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.ai-message.user {
+  background: #eef6ff;
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+.ai-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-input-row input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #fffdf5;
+}
+
 .form-card {
   background: #fffdf5;
 }
