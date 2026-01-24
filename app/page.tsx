@@ -1755,20 +1755,23 @@ export default function Home() {
         </div>
       </header>
 
+      <div className="top-import">
+        <RakumachiImporter
+          currentInput={inputData}
+          onApply={handleImportApply}
+          history={importHistory}
+          selectedHistoryId={selectedImportId}
+          onSelectHistory={handleImportSelect}
+          onClearHistory={handleImportClear}
+        />
+      </div>
+
       <section className="sheet">
         <div className="input-section">
           <div className="input-section-head">
             <span className="input-section-badge">ユーザー入力</span>
           </div>
           <div className="sheet-top">
-            <RakumachiImporter
-              currentInput={inputData}
-              onApply={handleImportApply}
-              history={importHistory}
-              selectedHistoryId={selectedImportId}
-              onSelectHistory={handleImportSelect}
-              onClearHistory={handleImportClear}
-            />
             <SimulationForm
               key={formVersion}
               initialData={inputData}
