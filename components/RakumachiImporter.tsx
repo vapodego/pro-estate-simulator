@@ -475,6 +475,7 @@ export const RakumachiImporter = ({
               )}
             </div>
             <div className="import-actions">
+              <span className="step-pill import-actions-step">Step2</span>
               <button type="button" className="section-toggle" onClick={handleApply}>
                 シミュレーターに反映
               </button>

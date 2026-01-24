@@ -633,7 +633,12 @@ a {
 
 .import-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.import-actions-step {
+  margin-right: auto;
 }
 
 .sheet-grid {
