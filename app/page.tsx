@@ -27,6 +27,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { SimulationForm } from "../components/SimulationForm";
 import { SimulationChart } from "../components/SimulationChart";
 import { DscrChart } from "../components/DscrChart";
+import { RakumachiImporter } from "../components/RakumachiImporter";
 import { calculateNPV, calculateIRR } from "../utils/finance";
 import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils/simulation";
 import { PropertyInput, ScenarioConfig, YearlyResult } from "../utils/types";
@@ -47,64 +48,65 @@ import {
   where,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "../utils/firebase";
-import { Building2, Calculator, GripVertical, Save, UserCircle } from "lucide-react";
+import { Building2, Calculator, Save, UserCircle } from "lucide-react";
+import { applyEstimatedDefaultsWithMeta } from "../utils/estimates";
 
-// デフォルトの初期値（スプレッドシートの例に近い設定）
+// デフォルトの初期値（空の状態）
 const DEFAULT_INPUT: PropertyInput = {
-  price: 100000000, // 物件価格 1億円（建物+土地）
-  buildingRatio: 60, // 建物比率 60%
-  miscCostRate: 0, // その他諸費用率 0%
-  landEvaluationRate: 70, // 土地評価率 70%
-  buildingEvaluationRate: 50, // 建物評価率 50%
-  landTaxReductionRate: 16.67, // 住宅用地特例 16.67% (1/6)
-  propertyTaxRate: 1.4, // 固定資産税率 1.4%
-  structure: "RC", // RC造
-  buildingAge: 0, // 新築
-  enableEquipmentSplit: false, // 設備分離なし（初期値）
-  equipmentRatio: 20, // 設備比率 20%
-  equipmentUsefulLife: 15, // 設備耐用年数 15年
-  waterContributionRate: 0.2, // 水道分担金 0.2%
-  fireInsuranceRate: 0.4, // 火災保険料 0.4%（5年一括の目安）
-  loanFeeRate: 2.2, // 融資手数料 2.2%
-  registrationCostRate: 1.2, // 登記費用 1.2%
-  acquisitionTaxRate: 3, // 不動産取得税率 3%
-  acquisitionLandReductionRate: 50, // 取得税の土地評価圧縮率 50%
-  loanAmount: 90000000, // 借入 9000万円
-  interestRate: 2.0, // 金利 2.0%
-  loanDuration: 35, // 期間 35年
-  monthlyRent: 600000, // 家賃月収 60万円
-  occupancyRate: 100, // 入居率 100%
-  rentDeclineRate: 0.5, // 家賃下落率 0.5% (2年ごと)
-  operatingExpenseRate: 15, // 経費率 15% (管理費+固都税等)
+  price: 0,
+  buildingRatio: 0,
+  miscCostRate: 0,
+  landEvaluationRate: 0,
+  buildingEvaluationRate: 0,
+  landTaxReductionRate: 0,
+  propertyTaxRate: 0,
+  structure: "RC",
+  buildingAge: 0,
+  enableEquipmentSplit: false,
+  equipmentRatio: 0,
+  equipmentUsefulLife: 0,
+  waterContributionRate: 0,
+  fireInsuranceRate: 0,
+  loanFeeRate: 0,
+  registrationCostRate: 0,
+  acquisitionTaxRate: 0,
+  acquisitionLandReductionRate: 0,
+  loanAmount: 0,
+  interestRate: 0,
+  loanDuration: 0,
+  monthlyRent: 0,
+  occupancyRate: 0,
+  rentDeclineRate: 0,
+  operatingExpenseRate: 0,
   repairEvents: [], // 修繕イベント
-  vacancyModel: "FIXED", // 空室モデル
-  vacancyCycleYears: 4, // 周期年数
-  vacancyCycleMonths: 3, // 周期の空室月数
-  vacancyProbability: 20, // 年間確率 20%
-  vacancyProbabilityMonths: 2, // 空室月数
-  taxType: "INDIVIDUAL", // 個人
-  incomeTaxRate: 22, // 所得税率 22%
-  otherIncome: 8000000, // 給与所得 800万円
-  corporateMinimumTax: 70000, // 法人の均等割 7万円
-  exitEnabled: true, // 売却シミュレーションを有効
-  exitYear: 10, // 売却年数
-  exitCapRate: 7, // 想定利回り 7%
-  exitBrokerageRate: 3, // 仲介手数料率 3%
-  exitBrokerageFixed: 600000, // 仲介手数料（定額）
-  exitOtherCostRate: 1, // その他売却コスト率 1%
-  exitShortTermTaxRate: 39, // 短期譲渡税率 39%
-  exitLongTermTaxRate: 20, // 長期譲渡税率 20%
-  exitDiscountRate: 4, // NPV割引率 4%
-  scenarioEnabled: true, // シナリオ比較を有効
-  scenarioInterestShockYear: 5, // 金利上昇年
-  scenarioInterestShockDelta: 1, // 金利上昇幅 1%
-  scenarioRentCurveEnabled: true, // 家賃下落カーブ
-  scenarioRentDeclineEarlyRate: 1.5, // 初期下落率
-  scenarioRentDeclineLateRate: 0.5, // 後半下落率
-  scenarioRentDeclineSwitchYear: 10, // 切替年
-  scenarioOccupancyDeclineEnabled: true, // 空室悪化
-  scenarioOccupancyDeclineStartYear: 10, // 空室悪化開始年
-  scenarioOccupancyDeclineDelta: 5, // 入居率低下幅
+  vacancyModel: "FIXED",
+  vacancyCycleYears: 0,
+  vacancyCycleMonths: 0,
+  vacancyProbability: 0,
+  vacancyProbabilityMonths: 0,
+  taxType: "INDIVIDUAL",
+  incomeTaxRate: 0,
+  otherIncome: 0,
+  corporateMinimumTax: 0,
+  exitEnabled: false,
+  exitYear: 0,
+  exitCapRate: 0,
+  exitBrokerageRate: 0,
+  exitBrokerageFixed: 0,
+  exitOtherCostRate: 0,
+  exitShortTermTaxRate: 0,
+  exitLongTermTaxRate: 0,
+  exitDiscountRate: 0,
+  scenarioEnabled: false,
+  scenarioInterestShockYear: 0,
+  scenarioInterestShockDelta: 0,
+  scenarioRentCurveEnabled: false,
+  scenarioRentDeclineEarlyRate: 0,
+  scenarioRentDeclineLateRate: 0,
+  scenarioRentDeclineSwitchYear: 0,
+  scenarioOccupancyDeclineEnabled: false,
+  scenarioOccupancyDeclineStartYear: 0,
+  scenarioOccupancyDeclineDelta: 0,
 };
 
 const DEFAULT_LEFT_ORDER = [
@@ -169,17 +171,17 @@ const SortableCard = ({ id, children }: SortableCardProps) => {
 
   return (
     <div ref={setNodeRef} style={style} className={`sortable-item${isDragging ? " is-dragging" : ""}`}>
-      <button
-        type="button"
-        className="drag-handle"
-        ref={setActivatorNodeRef}
-        aria-label="並び替え"
-        {...listeners}
-        {...attributes}
-      >
-        <GripVertical size={16} aria-hidden />
-      </button>
-      <div className="sortable-content">{children}</div>
+      <div className="sortable-content">
+        <button
+          type="button"
+          className="drag-band"
+          ref={setActivatorNodeRef}
+          aria-label="並び替え"
+          {...listeners}
+          {...attributes}
+        />
+        {children}
+      </div>
     </div>
   );
 };
@@ -219,6 +221,7 @@ const formatFirebaseError = (error: unknown, fallback: string) => {
 
 export default function Home() {
   const [inputData, setInputData] = useState<PropertyInput>(DEFAULT_INPUT);
+  const [autoFilledKeys, setAutoFilledKeys] = useState<(keyof PropertyInput)[]>([]);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -230,6 +233,7 @@ export default function Home() {
   const [saveOpen, setSaveOpen] = useState(false);
   const [leftOrder, setLeftOrder] = useState(DEFAULT_LEFT_ORDER);
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
+  const [formVersion, setFormVersion] = useState(0);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const saveMenuRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(
@@ -369,7 +373,22 @@ export default function Home() {
 
   const handleLoad = (item: SavedSimulation) => {
     setInputData({ ...DEFAULT_INPUT, ...item.input });
+    setAutoFilledKeys([]);
     setSelectedYear(1);
+    setFormVersion((prev) => prev + 1);
+  };
+
+  const handleImportApply = (patch: Partial<PropertyInput>) => {
+    const merged = { ...inputData, ...patch };
+    const { data, autoFilled } = applyEstimatedDefaultsWithMeta(merged);
+    setInputData(data);
+    setAutoFilledKeys(autoFilled);
+    setSelectedYear(1);
+    setFormVersion((prev) => prev + 1);
+  };
+
+  const handleFieldTouch = (key: keyof PropertyInput) => {
+    setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
   };
 
   const scenarioConfig: ScenarioConfig = {
@@ -1690,9 +1709,13 @@ export default function Home() {
 
       <section className="sheet">
         <div className="sheet-top">
+          <RakumachiImporter currentInput={inputData} onApply={handleImportApply} />
           <SimulationForm
-            initialData={DEFAULT_INPUT}
+            key={formVersion}
+            initialData={inputData}
             onCalculate={(data) => setInputData(data)}
+            autoFilledKeys={autoFilledKeys}
+            onFieldTouch={handleFieldTouch}
           />
         </div>
         <div className="sheet-grid">

@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { PropertyInput, StructureType, LEGAL_USEFUL_LIFE } from "../utils/types";
+import { getSuggestedBuildingRatio } from "../utils/estimates";
 
 // 構造の選択肢定義
 const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
@@ -12,15 +13,30 @@ const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
   { label: "木造", value: "WOOD" },
 ];
 
+
 interface Props {
   initialData: PropertyInput;
   onCalculate: (data: PropertyInput) => void;
+  autoFilledKeys?: (keyof PropertyInput)[];
+  onFieldTouch?: (key: keyof PropertyInput) => void;
 }
 
-export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) => {
+export const SimulationForm: React.FC<Props> = ({
+  initialData,
+  onCalculate,
+  autoFilledKeys = [],
+  onFieldTouch,
+}) => {
   const [formData, setFormData] = useState<PropertyInput>(initialData);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const isBlankInput = (data: PropertyInput) =>
+    data.price === 0 &&
+    data.loanAmount === 0 &&
+    data.monthlyRent === 0 &&
+    data.buildingRatio === 0;
+  const [isPristine, setIsPristine] = useState(() => isBlankInput(initialData));
+  const [buildingRatioTouched, setBuildingRatioTouched] = useState(false);
   const [openPanels, setOpenPanels] = useState({
     basic: true,
     finance: true,
@@ -30,6 +46,17 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
     advanced: true,
     tax: true,
   });
+  const displayValue = (value: number, scale = 1) =>
+    isPristine && value === 0 ? "" : value / scale;
+  const displayPercent = (value: number) => (isPristine && value === 0 ? "" : value);
+  const autoFilledSet = useMemo(() => new Set(autoFilledKeys), [autoFilledKeys]);
+  const isAutoFilled = (key: keyof PropertyInput) => autoFilledSet.has(key);
+  const renderLabel = (text: string, key: keyof PropertyInput) => (
+    <label className={isAutoFilled(key) ? "auto-label" : undefined}>
+      {text}
+      {isAutoFilled(key) ? <span className="auto-pill">推定</span> : null}
+    </label>
+  );
   const legalLife = LEGAL_USEFUL_LIFE[formData.structure];
   const miscCostRate = Number.isFinite(formData.miscCostRate)
     ? formData.miscCostRate
@@ -160,6 +187,25 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
   const repairEvents = Array.isArray(formData.repairEvents)
     ? formData.repairEvents
     : initialData.repairEvents ?? [];
+
+  useEffect(() => {
+    const nextPristine = isBlankInput(initialData);
+    setIsPristine(nextPristine);
+    setBuildingRatioTouched(initialData.buildingRatio > 0);
+    if (nextPristine) {
+      return;
+    }
+    if (initialData.buildingRatio > 0) {
+      return;
+    }
+    const suggested = getSuggestedBuildingRatio(initialData.structure, initialData.buildingAge);
+    if (suggested <= 0) {
+      return;
+    }
+    const next = { ...initialData, buildingRatio: suggested };
+    setFormData(next);
+    onCalculate(next);
+  }, [initialData, onCalculate]);
 
   useEffect(() => {
     const occupancyRate = Number.isFinite(formData.occupancyRate)
@@ -380,7 +426,38 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
   const handleChange = (key: keyof PropertyInput, value: any) => {
     const newData = { ...formData, [key]: value };
     setFormData(newData);
+    setIsPristine(false);
+    onFieldTouch?.(key);
     onCalculate(newData);
+  };
+
+  const applyAutoBuildingRatio = (nextData: PropertyInput) => {
+    if (buildingRatioTouched) return nextData;
+    const suggested = getSuggestedBuildingRatio(nextData.structure, nextData.buildingAge);
+    if (suggested <= 0) return nextData;
+    return { ...nextData, buildingRatio: suggested };
+  };
+
+  const handleStructureChange = (value: StructureType) => {
+    const next = applyAutoBuildingRatio({ ...formData, structure: value });
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("structure");
+    onCalculate(next);
+  };
+
+  const handleBuildingAgeChange = (value: number) => {
+    const next = applyAutoBuildingRatio({ ...formData, buildingAge: value });
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("buildingAge");
+    onCalculate(next);
+  };
+
+  const handleBuildingRatioChange = (value: number) => {
+    setBuildingRatioTouched(true);
+    onFieldTouch?.("buildingRatio");
+    handleChange("buildingRatio", value);
   };
 
   const addRepairEvent = () => {
@@ -442,21 +519,24 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                       <label>物件価格 (建物+土地/万円)</label>
                       <input
                         type="number"
-                        value={formData.price / 10000} // 表示は万円単位
+                        value={displayValue(formData.price, 10000)} // 表示は万円単位
                         onChange={(e) => handleChange("price", Number(e.target.value) * 10000)}
                       />
                     </div>
                     <div>
-                      <label>建物比率 (%)</label>
+                      {renderLabel("建物比率 (%)", "buildingRatio")}
                       <input
                         type="number"
-                        value={formData.buildingRatio}
-                        onChange={(e) => handleChange("buildingRatio", Number(e.target.value))}
+                        value={displayPercent(formData.buildingRatio)}
+                        className={isAutoFilled("buildingRatio") ? "auto-input" : undefined}
+                        onChange={(e) => handleBuildingRatioChange(Number(e.target.value))}
                       />
-                      <p className="form-note">
-                        建物価格:{" "}
-                        {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
-                      </p>
+                      {!isPristine && formData.price > 0 && formData.buildingRatio > 0 ? (
+                        <p className="form-note">
+                          建物価格:{" "}
+                          {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
@@ -464,23 +544,32 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <div>
                       <label>構造</label>
                       <select
-                        value={formData.structure}
-                        onChange={(e) => handleChange("structure", e.target.value as StructureType)}
+                        value={isPristine ? "" : formData.structure}
+                        onChange={(e) => {
+                          const value = e.target.value as StructureType;
+                          if (!value) return;
+                          handleStructureChange(value);
+                        }}
                       >
+                        <option value="" disabled>
+                          選択
+                        </option>
                         {STRUCTURE_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>
                             {opt.label}
                           </option>
                         ))}
                       </select>
-                      <p className="form-note">法定耐用年数: {legalLife} 年</p>
+                      {!isPristine ? (
+                        <p className="form-note">法定耐用年数: {legalLife} 年</p>
+                      ) : null}
                     </div>
                     <div>
                       <label>築年数 (年)</label>
                       <input
                         type="number"
-                        value={formData.buildingAge}
-                        onChange={(e) => handleChange("buildingAge", Number(e.target.value))}
+                        value={displayValue(formData.buildingAge)}
+                        onChange={(e) => handleBuildingAgeChange(Number(e.target.value))}
                       />
                     </div>
                   </div>
@@ -505,27 +594,30 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                 <>
                   <div className="form-grid">
                     <div>
-                      <label>借入金額 (万円)</label>
+                      {renderLabel("借入金額 (万円)", "loanAmount")}
                       <input
                         type="number"
-                        value={formData.loanAmount / 10000}
+                        value={displayValue(formData.loanAmount, 10000)}
+                        className={isAutoFilled("loanAmount") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("loanAmount", Number(e.target.value) * 10000)}
                       />
                     </div>
                     <div>
-                      <label>金利 (%)</label>
+                      {renderLabel("金利 (%)", "interestRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={formData.interestRate}
+                        value={displayPercent(formData.interestRate)}
+                        className={isAutoFilled("interestRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("interestRate", Number(e.target.value))}
                       />
                     </div>
                     <div>
-                      <label>期間 (年)</label>
+                      {renderLabel("期間 (年)", "loanDuration")}
                       <input
                         type="number"
-                        value={formData.loanDuration}
+                        value={displayValue(formData.loanDuration)}
+                        className={isAutoFilled("loanDuration") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("loanDuration", Number(e.target.value))}
                       />
                     </div>
@@ -535,29 +627,33 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                       <label>月額賃料 (満室想定/万円)</label>
                       <input
                         type="number"
-                        value={formData.monthlyRent / 10000}
+                        value={displayValue(formData.monthlyRent, 10000)}
                         onChange={(e) => handleChange("monthlyRent", Number(e.target.value) * 10000)}
                       />
-                      <p className="form-note">
-                        年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
-                      </p>
+                      {!isPristine && formData.monthlyRent > 0 ? (
+                        <p className="form-note">
+                          年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
+                        </p>
+                      ) : null}
                     </div>
                     <div>
-                      <label>家賃下落率 (2年ごと/%)</label>
+                      {renderLabel("家賃下落率 (2年ごと/%)", "rentDeclineRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={rentDeclineValue}
+                        value={displayPercent(rentDeclineValue)}
+                        className={isAutoFilled("rentDeclineRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("rentDeclineRate", Number(e.target.value))}
                       />
                     </div>
                   </div>
                   <div className="form-grid three-col">
                     <div>
-                      <label>運営経費率 (%)</label>
+                      {renderLabel("運営経費率 (%)", "operatingExpenseRate")}
                       <input
                         type="number"
-                        value={formData.operatingExpenseRate}
+                        value={displayPercent(formData.operatingExpenseRate)}
+                        className={isAutoFilled("operatingExpenseRate") ? "auto-input" : undefined}
                         onChange={(e) =>
                           handleChange("operatingExpenseRate", Number(e.target.value))
                         }
@@ -584,87 +680,108 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                 <>
                   <div className="form-grid three-col">
                     <div>
-                      <label>水道分担金率 (%)</label>
+                      {renderLabel("水道分担金率 (%)", "waterContributionRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={waterContributionRate}
+                        value={displayPercent(waterContributionRate)}
+                        className={isAutoFilled("waterContributionRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("waterContributionRate", Number(e.target.value))}
                       />
-                      <p className="form-note">{(waterContribution / 10000).toLocaleString()} 万円</p>
+                      {!isPristine && waterContribution > 0 ? (
+                        <p className="form-note">{(waterContribution / 10000).toLocaleString()} 万円</p>
+                      ) : null}
                     </div>
                     <div>
-                      <label>火災保険率 (%)</label>
+                      {renderLabel("火災保険率 (%)", "fireInsuranceRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={fireInsuranceRate}
+                        value={displayPercent(fireInsuranceRate)}
+                        className={isAutoFilled("fireInsuranceRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("fireInsuranceRate", Number(e.target.value))}
                       />
-                      <p className="form-note">{(fireInsurance / 10000).toLocaleString()} 万円</p>
+                      {!isPristine && fireInsurance > 0 ? (
+                        <p className="form-note">{(fireInsurance / 10000).toLocaleString()} 万円</p>
+                      ) : null}
                     </div>
                     <div>
-                      <label>登記費用率 (%)</label>
+                      {renderLabel("登記費用率 (%)", "registrationCostRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={registrationCostRate}
+                        value={displayPercent(registrationCostRate)}
+                        className={isAutoFilled("registrationCostRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("registrationCostRate", Number(e.target.value))}
                       />
-                      <p className="form-note">{(registrationCost / 10000).toLocaleString()} 万円</p>
+                      {!isPristine && registrationCost > 0 ? (
+                        <p className="form-note">{(registrationCost / 10000).toLocaleString()} 万円</p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="form-grid three-col">
                     <div>
-                      <label>融資手数料率 (%)</label>
+                      {renderLabel("融資手数料率 (%)", "loanFeeRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={loanFeeRate}
+                        value={displayPercent(loanFeeRate)}
+                        className={isAutoFilled("loanFeeRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("loanFeeRate", Number(e.target.value))}
                       />
-                      <p className="form-note">{(loanFee / 10000).toLocaleString()} 万円</p>
+                      {!isPristine && loanFee > 0 ? (
+                        <p className="form-note">{(loanFee / 10000).toLocaleString()} 万円</p>
+                      ) : null}
                     </div>
                     <div>
-                      <label>その他諸費用率 (%)</label>
+                      {renderLabel("その他諸費用率 (%)", "miscCostRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={miscCostRate}
+                        value={displayPercent(miscCostRate)}
+                        className={isAutoFilled("miscCostRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("miscCostRate", Number(e.target.value))}
                       />
-                      <p className="form-note">{(miscCost / 10000).toLocaleString()} 万円</p>
+                      {!isPristine && miscCost > 0 ? (
+                        <p className="form-note">{(miscCost / 10000).toLocaleString()} 万円</p>
+                      ) : null}
                     </div>
                   </div>
-                  <p className="form-note">
-                    初期費用合計: {(initialCostsTotal / 10000).toLocaleString()} 万円 / 購入総額:{" "}
-                    {(estimatedTotal / 10000).toLocaleString()} 万円
-                  </p>
+                  {!isPristine && estimatedTotal > 0 ? (
+                    <p className="form-note">
+                      初期費用合計: {(initialCostsTotal / 10000).toLocaleString()} 万円 / 購入総額:{" "}
+                      {(estimatedTotal / 10000).toLocaleString()} 万円
+                    </p>
+                  ) : null}
                   <div className="form-grid two-col">
                     <div>
-                      <label>不動産取得税率 (%)</label>
+                      {renderLabel("不動産取得税率 (%)", "acquisitionTaxRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={acquisitionTaxRate}
+                        value={displayPercent(acquisitionTaxRate)}
+                        className={isAutoFilled("acquisitionTaxRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("acquisitionTaxRate", Number(e.target.value))}
                       />
                     </div>
                     <div>
-                      <label>土地評価圧縮率 (%)</label>
+                      {renderLabel("土地評価圧縮率 (%)", "acquisitionLandReductionRate")}
                       <input
                         type="number"
                         step="0.1"
-                        value={acquisitionLandReductionRate}
+                        value={displayPercent(acquisitionLandReductionRate)}
+                        className={isAutoFilled("acquisitionLandReductionRate") ? "auto-input" : undefined}
                         onChange={(e) =>
                           handleChange("acquisitionLandReductionRate", Number(e.target.value))
                         }
                       />
                     </div>
                   </div>
-                  <p className="form-note">
-                    不動産取得税（翌年計上）: {(acquisitionTaxEstimate / 10000).toLocaleString()} 万円
-                  </p>
+                  {!isPristine && acquisitionTaxEstimate > 0 ? (
+                    <p className="form-note">
+                      不動産取得税（翌年計上）: {(acquisitionTaxEstimate / 10000).toLocaleString()} 万円
+                    </p>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -696,10 +813,11 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                       </select>
                     </div>
                     <div>
-                      <label>入居率 (%)</label>
+                      {renderLabel("入居率 (%)", "occupancyRate")}
                       <input
                         type="number"
-                        value={occupancyRateValue}
+                        value={displayPercent(occupancyRateValue)}
+                        className={isAutoFilled("occupancyRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("occupancyRate", Number(e.target.value))}
                       />
                       <p className="form-note">空室モデルは入居率に上乗せで反映</p>
@@ -708,18 +826,20 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                   {vacancyModel === "CYCLE" ? (
                     <div className="form-grid two-col">
                       <div>
-                        <label>空室周期 (年)</label>
+                        {renderLabel("空室周期 (年)", "vacancyCycleYears")}
                         <input
                           type="number"
-                          value={vacancyCycleYears}
+                          value={displayValue(vacancyCycleYears)}
+                          className={isAutoFilled("vacancyCycleYears") ? "auto-input" : undefined}
                           onChange={(e) => handleChange("vacancyCycleYears", Number(e.target.value))}
                         />
                       </div>
                       <div>
-                        <label>空室月数</label>
+                        {renderLabel("空室月数", "vacancyCycleMonths")}
                         <input
                           type="number"
-                          value={vacancyCycleMonths}
+                          value={displayValue(vacancyCycleMonths)}
+                          className={isAutoFilled("vacancyCycleMonths") ? "auto-input" : undefined}
                           onChange={(e) =>
                             handleChange("vacancyCycleMonths", Number(e.target.value))
                           }
@@ -730,21 +850,23 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                   {vacancyModel === "PROBABILITY" ? (
                     <div className="form-grid two-col">
                       <div>
-                        <label>年間空室確率 (%)</label>
+                        {renderLabel("年間空室確率 (%)", "vacancyProbability")}
                         <input
                           type="number"
                           step="0.1"
-                          value={vacancyProbability}
+                          value={displayPercent(vacancyProbability)}
+                          className={isAutoFilled("vacancyProbability") ? "auto-input" : undefined}
                           onChange={(e) =>
                             handleChange("vacancyProbability", Number(e.target.value))
                           }
                         />
                       </div>
                       <div>
-                        <label>空室月数</label>
+                        {renderLabel("空室月数", "vacancyProbabilityMonths")}
                         <input
                           type="number"
-                          value={vacancyProbabilityMonths}
+                          value={displayValue(vacancyProbabilityMonths)}
+                          className={isAutoFilled("vacancyProbabilityMonths") ? "auto-input" : undefined}
                           onChange={(e) =>
                             handleChange("vacancyProbabilityMonths", Number(e.target.value))
                           }
@@ -847,7 +969,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                           <label>金利上昇年</label>
                           <input
                             type="number"
-                            value={scenarioInterestShockYear}
+                            value={displayValue(scenarioInterestShockYear)}
                             onChange={(e) =>
                               handleChange("scenarioInterestShockYear", Number(e.target.value))
                             }
@@ -858,7 +980,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                           <input
                             type="number"
                             step="0.1"
-                            value={scenarioInterestShockDelta}
+                            value={displayPercent(scenarioInterestShockDelta)}
                             onChange={(e) =>
                               handleChange("scenarioInterestShockDelta", Number(e.target.value))
                             }
@@ -888,7 +1010,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                             <input
                               type="number"
                               step="0.1"
-                              value={scenarioRentDeclineEarlyRate}
+                              value={displayPercent(scenarioRentDeclineEarlyRate)}
                               onChange={(e) =>
                                 handleChange("scenarioRentDeclineEarlyRate", Number(e.target.value))
                               }
@@ -899,7 +1021,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                             <input
                               type="number"
                               step="0.1"
-                              value={scenarioRentDeclineLateRate}
+                              value={displayPercent(scenarioRentDeclineLateRate)}
                               onChange={(e) =>
                                 handleChange("scenarioRentDeclineLateRate", Number(e.target.value))
                               }
@@ -909,7 +1031,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                             <label>切替年</label>
                             <input
                               type="number"
-                              value={scenarioRentDeclineSwitchYear}
+                              value={displayValue(scenarioRentDeclineSwitchYear)}
                               onChange={(e) =>
                                 handleChange("scenarioRentDeclineSwitchYear", Number(e.target.value))
                               }
@@ -938,7 +1060,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                           <label>悪化開始年</label>
                           <input
                             type="number"
-                            value={scenarioOccupancyDeclineStartYear}
+                            value={displayValue(scenarioOccupancyDeclineStartYear)}
                             onChange={(e) =>
                               handleChange(
                                 "scenarioOccupancyDeclineStartYear",
@@ -952,7 +1074,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                           <input
                             type="number"
                             step="0.1"
-                            value={scenarioOccupancyDeclineDelta}
+                            value={displayPercent(scenarioOccupancyDeclineDelta)}
                             onChange={(e) =>
                               handleChange("scenarioOccupancyDeclineDelta", Number(e.target.value))
                             }
@@ -1023,7 +1145,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <label>設備比率 (%)</label>
                         <input
                           type="number"
-                          value={formData.equipmentRatio}
+                          value={displayPercent(formData.equipmentRatio)}
                           onChange={(e) => handleChange("equipmentRatio", Number(e.target.value))}
                         />
                       </div>
@@ -1031,7 +1153,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <label>設備耐用年数 (年)</label>
                         <input
                           type="number"
-                          value={equipmentUsefulLifeValue}
+                          value={displayValue(equipmentUsefulLifeValue)}
                           onChange={(e) =>
                             handleChange("equipmentUsefulLife", Number(e.target.value))
                           }
@@ -1074,7 +1196,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <label>他所得 (給与など/万円)</label>
                     <input
                       type="number"
-                      value={otherIncomeValue / 10000}
+                      value={displayValue(otherIncomeValue, 10000)}
                       onChange={(e) => handleChange("otherIncome", Number(e.target.value) * 10000)}
                     />
                     <p className="form-note">累進課税 + 住民税10%で計算</p>
@@ -1083,7 +1205,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <label>法人均等割 (万円/年)</label>
                     <input
                       type="number"
-                      value={corporateMinimumTaxValue / 10000}
+                      value={displayValue(corporateMinimumTaxValue, 10000)}
                       onChange={(e) =>
                         handleChange("corporateMinimumTax", Number(e.target.value) * 10000)
                       }
@@ -1118,7 +1240,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <label>売却年数 (年)</label>
                         <input
                           type="number"
-                          value={exitYearValue}
+                          value={displayValue(exitYearValue)}
                           onChange={(e) => handleChange("exitYear", Number(e.target.value))}
                         />
                       </div>
@@ -1127,7 +1249,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitCapRateValue}
+                          value={displayPercent(exitCapRateValue)}
                           onChange={(e) => handleChange("exitCapRate", Number(e.target.value))}
                         />
                       </div>
@@ -1138,7 +1260,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitBrokerageRateValue}
+                          value={displayPercent(exitBrokerageRateValue)}
                           onChange={(e) => handleChange("exitBrokerageRate", Number(e.target.value))}
                         />
                       </div>
@@ -1146,7 +1268,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <label>仲介手数料 (定額/万円)</label>
                         <input
                           type="number"
-                          value={exitBrokerageFixedValue / 10000}
+                          value={displayValue(exitBrokerageFixedValue, 10000)}
                           onChange={(e) =>
                             handleChange("exitBrokerageFixed", Number(e.target.value) * 10000)
                           }
@@ -1159,7 +1281,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitOtherCostRateValue}
+                          value={displayPercent(exitOtherCostRateValue)}
                           onChange={(e) => handleChange("exitOtherCostRate", Number(e.target.value))}
                         />
                         <p className="form-note">修繕・測量・登記などの概算</p>
@@ -1169,7 +1291,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitDiscountRateValue}
+                          value={displayPercent(exitDiscountRateValue)}
                           onChange={(e) => handleChange("exitDiscountRate", Number(e.target.value))}
                         />
                       </div>
@@ -1180,7 +1302,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitShortTermTaxRateValue}
+                          value={displayPercent(exitShortTermTaxRateValue)}
                           onChange={(e) => handleChange("exitShortTermTaxRate", Number(e.target.value))}
                         />
                       </div>
@@ -1189,7 +1311,7 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                         <input
                           type="number"
                           step="0.1"
-                          value={exitLongTermTaxRateValue}
+                          value={displayPercent(exitLongTermTaxRateValue)}
                           onChange={(e) => handleChange("exitLongTermTaxRate", Number(e.target.value))}
                         />
                         <p className="form-note">5年超で長期を適用</p>
@@ -1224,7 +1346,8 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <input
                       type="number"
                       step="0.1"
-                      value={landEvaluationRate}
+                      value={displayPercent(landEvaluationRate)}
+                      className={isAutoFilled("landEvaluationRate") ? "auto-input" : undefined}
                       onChange={(e) => handleChange("landEvaluationRate", Number(e.target.value))}
                     />
                   </div>
@@ -1233,7 +1356,8 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <input
                       type="number"
                       step="0.1"
-                      value={buildingEvaluationRate}
+                      value={displayPercent(buildingEvaluationRate)}
+                      className={isAutoFilled("buildingEvaluationRate") ? "auto-input" : undefined}
                       onChange={(e) => handleChange("buildingEvaluationRate", Number(e.target.value))}
                     />
                   </div>
@@ -1242,7 +1366,8 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <input
                       type="number"
                       step="0.01"
-                      value={landTaxReductionRate}
+                      value={displayPercent(landTaxReductionRate)}
+                      className={isAutoFilled("landTaxReductionRate") ? "auto-input" : undefined}
                       onChange={(e) => handleChange("landTaxReductionRate", Number(e.target.value))}
                     />
                     <p className="form-note">※1/6なら16.67%</p>
@@ -1252,7 +1377,8 @@ export const SimulationForm: React.FC<Props> = ({ initialData, onCalculate }) =>
                     <input
                       type="number"
                       step="0.01"
-                      value={propertyTaxRate}
+                      value={displayPercent(propertyTaxRate)}
+                      className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
                       onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
                     />
                   </div>
