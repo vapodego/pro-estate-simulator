@@ -84,6 +84,222 @@ const OER_LEASING_DEFAULTS: Record<OerAgeBand, { months: number; tenancyYears: n
   OLD: { months: 2.0, tenancyYears: 2 },
 };
 
+type InputHelp = {
+  title: string;
+  body: string;
+  note?: string;
+};
+
+const DEFAULT_INPUT_HELP = "シミュレーションに使う入力項目です。";
+
+const INPUT_HELP: Record<string, InputHelp> = {
+  price: {
+    title: "物件価格（建物＋土地／万円）",
+    body:
+      "説明：購入価格の合計（建物＋土地）です。\n結果への影響：借入額・返済額・購入時諸費用・税金（評価）の基準になります。\nコツ：税込/税抜や付帯工事費の扱いは、売買契約書の記載に合わせてください。",
+  },
+  buildingRatio: {
+    title: "建物比率（%）",
+    body:
+      "説明：物件価格のうち「建物部分」の割合です。\n結果への影響：減価償却（節税効果）や固定資産税評価の分解に影響します。\nコツ：不明な場合は売買契約書の内訳、または固定資産評価証明の比率を参考に。",
+  },
+  structure: {
+    title: "構造",
+    body:
+      "説明：木造・鉄骨・RCなどの構造種別です。\n結果への影響：融資期間の出やすさ、修繕費の傾向、耐用年数（償却）に影響します。\nコツ：登記簿（建物）や重要事項説明書に記載の構造で入力します。",
+  },
+  buildingAge: {
+    title: "築年数（年）",
+    body:
+      "説明：建築からの経過年数です。\n結果への影響：融資期間、修繕費、空室リスク、家賃下落の前提に影響します。\nコツ：新築は0年、築浅でも大規模修繕履歴があれば別途「修繕イベント」で反映できます。",
+  },
+  loanAmount: {
+    title: "借入金額（万円）",
+    body:
+      "説明：ローンで借りる金額（元本）です。\n結果への影響：返済額とキャッシュフロー（CF）に直結します。\nコツ：「物件価格−頭金」だけでなく、諸費用を借りる場合はその分も加えます。",
+  },
+  interestRate: {
+    title: "金利（%）",
+    body:
+      "説明：ローンの年利です。\n結果への影響：返済額が増減し、CFとDSCR（返済余裕）が大きく変わります。\nコツ：変動/固定の想定に合わせ、保守的に少し高めで試算するのがおすすめです。",
+  },
+  loanDuration: {
+    title: "期間（年）",
+    body:
+      "説明：ローン返済期間です。\n結果への影響：期間が長いほど月返済が軽くなり、CFが出やすくなります。\nコツ：築古は短くなることが多いので、金融機関の提示条件で入力してください。",
+  },
+  monthlyRent: {
+    title: "月額賃料（満室想定／万円）",
+    body:
+      "説明：満室のときの月間家賃収入（共益費を含めるかは運用に合わせて）です。\n結果への影響：収入の基礎となり、NOI・CFが比例して変動します。\nコツ：レントロール（賃貸条件一覧）をベースに。保守的に見たい場合は満室賃料を少し下げます。",
+  },
+  rentDeclineRate: {
+    title: "家賃下落率（2年ごと／%）",
+    body:
+      "説明：時間経過で家賃が下がる前提（2年ごとに何%下がるか）です。\n結果への影響：将来の収入が低下し、長期のCFや出口（売却想定）に影響します。\nコツ：築浅は小さめ、競合供給が多いエリアはやや大きめに置くと安全です。",
+  },
+  occupancyRate: {
+    title: "入居率（%）",
+    body:
+      "説明：満室賃料に掛ける稼働率です（例：95%）。\n結果への影響：賃料収入が比例して変動し、CFに直結します。\nコツ：新築でも常に100%ではない前提で、95〜98%などで試算すると現実的です。",
+  },
+  unitCount: {
+    title: "戸数",
+    body:
+      "説明：住戸（部屋）の数です。\n結果への影響：清掃・修繕・募集費などの発生頻度の推定に影響します。\nコツ：戸数が多いほど費用が一定程度増える想定になります。",
+  },
+  cleaningVisitsPerMonth: {
+    title: "清掃回数／月",
+    body:
+      "説明：共用部清掃の頻度です。\n結果への影響：清掃費が増減し、NOI・CFに影響します。\nコツ：管理仕様（週1・隔週など）に合わせて設定してください。",
+  },
+  operatingExpenseRate: {
+    title: "運営経費率（%）",
+    body:
+      "説明：家賃収入に対する運営費の割合です。\n結果への影響：NOI＝収入−運営費なので、CFに直結します。\nコツ：管理費・税・保険・清掃・修繕を含む前提で入力します。",
+  },
+  oerMode: {
+    title: "入力方式（簡易／内訳）",
+    body:
+      "説明：運営費を「合計率で入力」するか「項目ごとに入力」するかを選びます。\n結果への影響：内訳入力の方が精度が上がり、費用の偏り（修繕など）を表現しやすくなります。\nコツ：最初は簡易→慣れたら内訳がおすすめです。",
+  },
+  oerPropertyType: {
+    title: "運営経費テンプレ",
+    body:
+      "説明：物件タイプ別の一般的な運営費モデルを自動入力します。\n結果への影響：運営費の初期値が変わり、NOI・CFが変わります。\nコツ：実績値がある場合は、テンプレ適用後に上書きしてください。",
+  },
+  oerAgeBand: {
+    title: "築年数帯",
+    body:
+      "説明：築年数に応じた運営費（修繕・募集費等）の想定レンジです。\n結果への影響：運営費率や修繕の見積もりが変化します。\nコツ：実際の築年に近い帯を選ぶと精度が上がります。",
+  },
+  oerRateItemLabel: { title: "費目名", body: "率で計算する費目の名称。" },
+  oerRateItemRate: { title: "率", body: "家賃に対する割合（%）。" },
+  oerRateItemBase: { title: "基準", body: "満室(GPR)か稼働後(EGI)を選びます。" },
+  oerRateItemEnabled: { title: "有効", body: "この費目を合算に含めます。" },
+  oerFixedItemLabel: { title: "固定費名", body: "年額の固定費項目。" },
+  oerFixedItemAmount: { title: "年額", body: "万円/年で入力します。" },
+  oerFixedItemEnabled: { title: "有効", body: "この費目を合算に含めます。" },
+  oerEventItemLabel: { title: "イベント名", body: "周期イベントの名称。" },
+  oerEventItemAmount: { title: "金額", body: "イベント金額（万円）。" },
+  oerEventItemInterval: { title: "周期", body: "何年ごとに発生するか。" },
+  oerEventItemMode: { title: "方式", body: "平準化か発生年計上を選択。" },
+  oerEventItemEnabled: { title: "有効", body: "この費目を合算に含めます。" },
+  oerLeasingMonths: {
+    title: "費用（月数）",
+    body:
+      "仲介+ADの合計月数です。入替頻度が高いほど費用が効きます。競争が強いエリアは多め、築浅・駅近は控えめが目安。",
+  },
+  oerLeasingTenancyYears: {
+    title: "平均居住年数",
+    body:
+      "リーシング費を年換算するための平均居住年数です。長いほど年換算コストは下がります。",
+  },
+  waterContributionRate: {
+    title: "水道分担金率（%）",
+    body:
+      "説明：水道加入金・分担金など、購入時に発生する費用の見積もりです。\n結果への影響：初期費用（自己資金）を押し上げます。\nコツ：新築・開発案件で発生しやすいので、資料があれば実額で確認を推奨。",
+  },
+  fireInsuranceRate: {
+    title: "火災保険率（%）",
+    body:
+      "説明：火災保険（必要に応じて地震保険含む）の費用見積もりです。\n結果への影響：初期費用、または運営費（扱いは設定に依存）に影響します。\nコツ：見積もりがある場合はそれを優先してください。",
+  },
+  registrationCostRate: {
+    title: "登記費用率（%）",
+    body:
+      "説明：登記関連（登録免許税・司法書士報酬等）の見積もりです。\n結果への影響：購入時の初期費用を増やします。\nコツ：物件価格に比例しやすいので、概算率での入力が有効です。",
+  },
+  loanFeeRate: {
+    title: "融資手数料率（%）",
+    body:
+      "説明：融資事務手数料（定率型）の見積もりです。\n結果への影響：初期費用（自己資金）を増やします。\nコツ：定額型（例：33万円等）の場合は、別項目（その他）で調整します。",
+  },
+  miscCostRate: {
+    title: "その他諸費用率（%）",
+    body:
+      "説明：上記以外の購入諸費用（印紙、調査費、細目費用など）のまとめ枠です。\n結果への影響：初期費用（自己資金）を増やします。\nコツ：仲介手数料が別計上でない場合、ここに含める運用も可能です。",
+  },
+  acquisitionTaxRate: {
+    title: "不動産取得税率（%）",
+    body:
+      "説明：購入後に課税される不動産取得税の見積もりです。\n結果への影響：初期費用（後払いの税負担）を増やします。\nコツ：課税標準は時価ではなく評価額ベースなので、概算→確定後に実額反映が安全です。",
+  },
+  acquisitionLandReductionRate: {
+    title: "土地評価圧縮率（%）",
+    body:
+      "説明：土地の評価額を、時価よりどれだけ低く見積もるかの調整です。\n結果への影響：固定資産税（および取得税の一部前提）が変わり、年間CFに影響します。\nコツ：実際の固定資産評価額が分かる場合は、圧縮ではなく評価率側で合わせるのがおすすめです。",
+  },
+  landEvaluationRate: {
+    title: "土地評価率（%）",
+    body:
+      "説明：土地の固定資産税評価額が、土地価格（または土地部分）に対して何%かの仮定です。\n結果への影響：固定資産税・都市計画税が増減し、CFに影響します。\nコツ：自治体の評価額（課税明細）に合わせると精度が上がります。",
+  },
+  buildingEvaluationRate: {
+    title: "建物評価率（%）",
+    body:
+      "説明：建物の固定資産税評価額が、建物価格に対して何%かの仮定です。\n結果への影響：固定資産税・都市計画税が増減し、CFに影響します。\nコツ：新築は評価が高めに出ることがあります。",
+  },
+  landTaxReductionRate: {
+    title: "住宅用地特例（%）",
+    body:
+      "説明：住宅用地に適用される課税標準の軽減（例：1/6など）を反映します。\n結果への影響：土地にかかる固定資産税が下がり、CFが改善します。\nコツ：敷地面積・戸数・用途で適用が変わるため、分かる場合は実際の特例を反映してください。",
+  },
+  propertyTaxRate: {
+    title: "固定資産税・都市計画税率（%）",
+    body:
+      "説明：固定資産税と都市計画税を合算した実効税率です。\n結果への影響：毎年の固定費としてNOIを下げ、CFに影響します。\nコツ：物件所在地の税率・課税実績が分かる場合は実額に合わせるのが最も正確です。",
+  },
+  vacancyModel: {
+    title: "空室モデル",
+    body:
+      "説明：空室（入居率低下）をどのように収入に反映するかの方式です。\n結果への影響：実効賃料収入が減り、NOI・CFが変動します。\nコツ：長期保有なら「入居率を保守的に」置くと安全です。",
+  },
+  vacancyCycleYears: { title: "空室周期", body: "何年ごとに空室が発生するか。" },
+  vacancyCycleMonths: { title: "空室月数", body: "空室が続く月数。" },
+  vacancyProbability: { title: "年間空室確率", body: "年ごとの空室発生確率。" },
+  vacancyProbabilityMonths: { title: "空室月数", body: "確率モデルの空室月数。" },
+  repairEvents: {
+    title: "修繕イベント",
+    body:
+      "説明：給湯器更新・外壁防水など、年次で発生する大きな修繕を登録します。\n結果への影響：特定年のCFが落ちる“谷”を可視化できます。\nコツ：複数棟運用ではイベント登録があると資金繰りが読みやすくなります。",
+  },
+  repairEventYear: { title: "年", body: "発生する年。" },
+  repairEventAmount: { title: "金額", body: "修繕費（万円）。" },
+  repairEventLabel: { title: "内容", body: "修繕内容のメモ。" },
+  scenarioEnabled: {
+    title: "有効にする",
+    body:
+      "説明：金利上昇・家賃下落・入居率悪化などのストレス条件を適用して比較します。\n結果への影響：CFの下振れ幅が見えるため、投資判断の安全性が上がります。\nコツ：購入判断前は「有効」にして耐性を確認するのがおすすめです。",
+  },
+  scenarioInterestShockYear: { title: "金利上昇年", body: "金利が上昇する年。" },
+  scenarioInterestShockDelta: { title: "金利上昇幅", body: "上昇する金利幅（%）。" },
+  scenarioRentCurveEnabled: { title: "家賃下落カーブ", body: "段階的な下落を有効化。" },
+  scenarioRentDeclineEarlyRate: { title: "初期下落率", body: "前半の下落率（2年ごと/%）。" },
+  scenarioRentDeclineLateRate: { title: "後半下落率", body: "後半の下落率（2年ごと/%）。" },
+  scenarioRentDeclineSwitchYear: { title: "切替年", body: "下落率を切り替える年。" },
+  scenarioOccupancyDeclineEnabled: { title: "入居率悪化", body: "入居率悪化のシナリオを有効化。" },
+  scenarioOccupancyDeclineStartYear: { title: "悪化開始年", body: "悪化が始まる年。" },
+  scenarioOccupancyDeclineDelta: { title: "入居率低下幅", body: "低下させる幅（%）。" },
+  enableEquipmentSplit: { title: "設備分離", body: "設備として短期償却する設定。" },
+  equipmentRatio: { title: "設備比率", body: "建物価格のうち設備に割り当てる割合。" },
+  equipmentUsefulLife: { title: "設備耐用年数", body: "設備の耐用年数（年）。" },
+  taxType: { title: "税務モード", body: "個人か法人かを選択します。" },
+  taxTypeIndividual: { title: "個人", body: "累進課税＋住民税で計算。" },
+  taxTypeCorporate: { title: "法人", body: "実効税率＋均等割で計算。" },
+  otherIncome: { title: "他所得", body: "給与など他の所得（万円）。" },
+  corporateMinimumTax: { title: "法人均等割", body: "赤字でもかかる年額固定税。" },
+  exitEnabled: { title: "売却シミュレーション", body: "出口戦略を有効化します。" },
+  exitYear: { title: "売却年数", body: "売却する年数。" },
+  exitCapRate: { title: "キャップレート", body: "売却利回りの想定値（%）。" },
+  exitBrokerageRate: { title: "仲介手数料率", body: "売却価格に対する率。" },
+  exitBrokerageFixed: { title: "仲介手数料(定額)", body: "定額の仲介費用（万円）。" },
+  exitOtherCostRate: { title: "その他売却コスト率", body: "修繕・測量などの概算率。" },
+  exitDiscountRate: { title: "NPV割引率", body: "現在価値の割引率。" },
+  exitShortTermTaxRate: { title: "短期譲渡税率", body: "5年以下の税率。" },
+  exitLongTermTaxRate: { title: "長期譲渡税率", body: "5年超の税率。" },
+};
+
 const getCleaningMonthlyCost = (unitCount: number, visitsPerMonth: number) => {
   if (!Number.isFinite(unitCount) || unitCount <= 0) return null;
   const normalizedVisits = visitsPerMonth >= 4 ? 4 : 2;
@@ -183,17 +399,66 @@ export const SimulationForm: React.FC<Props> = ({
     repair: true,
     advanced: true,
   });
+  const [activeInputHelp, setActiveInputHelp] = useState<string | null>(null);
   const displayValue = (value: number, scale = 1) =>
     isPristine && value === 0 ? "" : value / scale;
   const displayPercent = (value: number) => (isPristine && value === 0 ? "" : value);
   const autoFilledSet = useMemo(() => new Set(autoFilledKeys), [autoFilledKeys]);
   const isAutoFilled = (key: keyof PropertyInput) => autoFilledSet.has(key);
-  const renderLabel = (text: string, key: keyof PropertyInput) => (
-    <label className={isAutoFilled(key) ? "auto-label" : undefined}>
-      {text}
-      {isAutoFilled(key) ? <span className="auto-pill">推定</span> : null}
+  const getInputHelp = (helpKey: string, fallbackTitle: string): InputHelp => {
+    const help = INPUT_HELP[helpKey];
+    if (help) return help;
+    return { title: fallbackTitle, body: DEFAULT_INPUT_HELP };
+  };
+  const renderInfoButton = (helpKey: string, fallbackTitle: string) => {
+    const help = getInputHelp(helpKey, fallbackTitle);
+    const isOpen = activeInputHelp === helpKey;
+    return (
+      <span className="input-info">
+        <button
+          type="button"
+          className="input-info-btn"
+          aria-label={`${help.title}の説明`}
+          aria-expanded={isOpen}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setActiveInputHelp(isOpen ? null : helpKey);
+          }}
+        >
+          i
+        </button>
+        {isOpen ? (
+          <div className="input-info-popover" role="dialog">
+            <div className="input-info-title">{help.title}</div>
+            <div className="input-info-text">{help.body}</div>
+            {help.note ? <div className="input-info-note">{help.note}</div> : null}
+          </div>
+        ) : null}
+      </span>
+    );
+  };
+  const renderHelpLabel = (
+    text: string,
+    helpKey: string,
+    autoKey?: keyof PropertyInput
+  ) => (
+    <label
+      className={
+        autoKey && isAutoFilled(autoKey)
+          ? "auto-label input-label"
+          : "input-label"
+      }
+    >
+      <span className="input-label-text">{text}</span>
+      {renderInfoButton(helpKey, text)}
+      {autoKey && isAutoFilled(autoKey) ? <span className="auto-pill">推定</span> : null}
     </label>
   );
+  const renderLabel = (text: string, key: keyof PropertyInput) =>
+    renderHelpLabel(text, key, key);
+  const getInputHelpText = (helpKey: string, fallbackTitle: string) =>
+    getInputHelp(helpKey, fallbackTitle).body;
   const formatManYen = (value: number | null | undefined) => {
     if (value === null || value === undefined) return null;
     const man = Math.round((value / 10000) * 10) / 10;
@@ -1108,7 +1373,7 @@ export const SimulationForm: React.FC<Props> = ({
                   <>
                     <div className="form-grid two-col oer-top-grid">
                       <div>
-                        <label>物件価格 (建物+土地/万円)</label>
+                        {renderLabel("物件価格 (建物+土地/万円)", "price")}
                         <input
                           type="number"
                           value={displayValue(formData.price, 10000)} // 表示は万円単位
@@ -1134,7 +1399,7 @@ export const SimulationForm: React.FC<Props> = ({
 
                     <div className="form-grid two-col oer-top-grid">
                       <div>
-                        <label>構造</label>
+                        {renderLabel("構造", "structure")}
                         <select
                           value={isPristine ? "" : formData.structure}
                           onChange={(e) => {
@@ -1157,7 +1422,7 @@ export const SimulationForm: React.FC<Props> = ({
                         ) : null}
                       </div>
                       <div>
-                        <label>築年数 (年)</label>
+                        {renderLabel("築年数 (年)", "buildingAge")}
                         <input
                           type="number"
                           value={displayValue(formData.buildingAge)}
@@ -1219,7 +1484,7 @@ export const SimulationForm: React.FC<Props> = ({
                     <div className="form-subtitle">収支</div>
                     <div className="form-grid one-col compact">
                       <div>
-                        <label>月額賃料 (満室想定/万円)</label>
+                        {renderLabel("月額賃料 (満室想定/万円)", "monthlyRent")}
                         <input
                           type="number"
                           value={displayValue(formData.monthlyRent, 10000)}
@@ -1270,7 +1535,10 @@ export const SimulationForm: React.FC<Props> = ({
                   <div className="oer-box">
                     <div className="oer-box-head">
                       <div>
-                        <div className="oer-box-title">入力方式</div>
+                        <div className="oer-box-title">
+                          入力方式
+                          {renderInfoButton("oerMode", "入力方式")}
+                        </div>
                         <p className="form-note">簡易入力か内訳入力を選べます。</p>
                       </div>
                       <div className="oer-mode-toggle" role="group" aria-label="運営経費モード">
@@ -1293,7 +1561,7 @@ export const SimulationForm: React.FC<Props> = ({
 
                     <div className="form-grid oer-top-grid">
                       <div>
-                        <label>運営経費テンプレ</label>
+                        {renderHelpLabel("運営経費テンプレ", "oerPropertyType")}
                         <select
                           value={oerPropertyType}
                           onChange={(e) => {
@@ -1309,7 +1577,7 @@ export const SimulationForm: React.FC<Props> = ({
                         </select>
                       </div>
                       <div>
-                        <label>築年数帯</label>
+                        {renderHelpLabel("築年数帯", "oerAgeBand")}
                         <select
                           value={oerAgeBand}
                           onChange={(e) => {
@@ -1325,7 +1593,7 @@ export const SimulationForm: React.FC<Props> = ({
                         </select>
                       </div>
                       <div>
-                        <label>戸数</label>
+                        {renderLabel("戸数", "unitCount")}
                         <input
                           type="number"
                           value={displayValue(formData.unitCount)}
@@ -1333,7 +1601,7 @@ export const SimulationForm: React.FC<Props> = ({
                         />
                       </div>
                       <div>
-                        <label>清掃回数/月</label>
+                        {renderLabel("清掃回数/月", "cleaningVisitsPerMonth")}
                         <select
                           value={
                             formData.cleaningVisitsPerMonth > 0
@@ -1462,6 +1730,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   <input
                                     type="text"
                                     value={item.label}
+                                    aria-label="費目名"
+                                    title={getInputHelpText("oerRateItemLabel", "費目名")}
                                     onChange={(e) =>
                                       updateOerRateItem(item.id, { label: e.target.value })
                                     }
@@ -1470,6 +1740,8 @@ export const SimulationForm: React.FC<Props> = ({
                                     type="number"
                                     step="0.1"
                                     value={Number.isFinite(item.rate) ? item.rate : 0}
+                                    aria-label="率"
+                                    title={getInputHelpText("oerRateItemRate", "率")}
                                     onChange={(e) =>
                                       updateOerRateItem(item.id, {
                                         rate: Number(e.target.value),
@@ -1478,6 +1750,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   />
                                   <select
                                     value={item.base}
+                                    aria-label="基準"
+                                    title={getInputHelpText("oerRateItemBase", "基準")}
                                     onChange={(e) =>
                                       updateOerRateItem(item.id, {
                                         base: e.target.value as OerRateItem["base"],
@@ -1491,11 +1765,13 @@ export const SimulationForm: React.FC<Props> = ({
                                     <input
                                       type="checkbox"
                                       checked={item.enabled}
+                                      aria-label="有効"
                                       onChange={(e) =>
                                         updateOerRateItem(item.id, { enabled: e.target.checked })
                                       }
                                     />
                                     有効
+                                    {renderInfoButton("oerRateItemEnabled", "有効")}
                                   </label>
                                   <button
                                     type="button"
@@ -1528,6 +1804,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   <input
                                     type="text"
                                     value={item.label}
+                                    aria-label="固定費名"
+                                    title={getInputHelpText("oerFixedItemLabel", "固定費名")}
                                     onChange={(e) =>
                                       updateOerFixedItem(item.id, { label: e.target.value })
                                     }
@@ -1539,6 +1817,8 @@ export const SimulationForm: React.FC<Props> = ({
                                         ? item.annualAmount / 10000
                                         : 0
                                     }
+                                    aria-label="年額"
+                                    title={getInputHelpText("oerFixedItemAmount", "年額")}
                                     onChange={(e) =>
                                       updateOerFixedItem(item.id, {
                                         annualAmount: Number(e.target.value) * 10000,
@@ -1550,11 +1830,13 @@ export const SimulationForm: React.FC<Props> = ({
                                     <input
                                       type="checkbox"
                                       checked={item.enabled}
+                                      aria-label="有効"
                                       onChange={(e) =>
                                         updateOerFixedItem(item.id, { enabled: e.target.checked })
                                       }
                                     />
                                     有効
+                                    {renderInfoButton("oerFixedItemEnabled", "有効")}
                                   </label>
                                   <button
                                     type="button"
@@ -1587,6 +1869,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   <input
                                     type="text"
                                     value={item.label}
+                                    aria-label="イベント名"
+                                    title={getInputHelpText("oerEventItemLabel", "イベント名")}
                                     onChange={(e) =>
                                       updateOerEventItem(item.id, { label: e.target.value })
                                     }
@@ -1594,6 +1878,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   <input
                                     type="number"
                                     value={Number.isFinite(item.amount) ? item.amount / 10000 : 0}
+                                    aria-label="金額"
+                                    title={getInputHelpText("oerEventItemAmount", "金額")}
                                     onChange={(e) =>
                                       updateOerEventItem(item.id, {
                                         amount: Number(e.target.value) * 10000,
@@ -1603,6 +1889,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   <input
                                     type="number"
                                     value={item.intervalYears}
+                                    aria-label="周期"
+                                    title={getInputHelpText("oerEventItemInterval", "周期")}
                                     onChange={(e) =>
                                       updateOerEventItem(item.id, {
                                         intervalYears: Number(e.target.value),
@@ -1611,6 +1899,8 @@ export const SimulationForm: React.FC<Props> = ({
                                   />
                                   <select
                                     value={item.mode}
+                                    aria-label="方式"
+                                    title={getInputHelpText("oerEventItemMode", "方式")}
                                     onChange={(e) =>
                                       updateOerEventItem(item.id, {
                                         mode: e.target.value as OerEventItem["mode"],
@@ -1624,11 +1914,13 @@ export const SimulationForm: React.FC<Props> = ({
                                     <input
                                       type="checkbox"
                                       checked={item.enabled}
+                                      aria-label="有効"
                                       onChange={(e) =>
                                         updateOerEventItem(item.id, { enabled: e.target.checked })
                                       }
                                     />
                                     有効
+                                    {renderInfoButton("oerEventItemEnabled", "有効")}
                                   </label>
                                   <button
                                     type="button"
@@ -1648,7 +1940,7 @@ export const SimulationForm: React.FC<Props> = ({
                             </div>
                             <div className="form-grid compact oer-leasing-grid">
                               <div>
-                                <label>費用(月数)</label>
+                                {renderHelpLabel("費用(月数)", "oerLeasingMonths")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -1660,7 +1952,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 />
                               </div>
                               <div>
-                                <label>平均居住年数</label>
+                                {renderHelpLabel("平均居住年数", "oerLeasingTenancyYears")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -1807,7 +2099,7 @@ export const SimulationForm: React.FC<Props> = ({
                   <div className="form-subtitle">固定資産税・都市計画税パラメータ</div>
                   <div className="form-grid two-col compact">
                     <div>
-                      <label>土地評価率 (%)</label>
+                      {renderLabel("土地評価率 (%)", "landEvaluationRate")}
                       <input
                         type="number"
                         step="0.1"
@@ -1817,7 +2109,7 @@ export const SimulationForm: React.FC<Props> = ({
                       />
                     </div>
                     <div>
-                      <label>建物評価率 (%)</label>
+                      {renderLabel("建物評価率 (%)", "buildingEvaluationRate")}
                       <input
                         type="number"
                         step="0.1"
@@ -1829,7 +2121,7 @@ export const SimulationForm: React.FC<Props> = ({
                       />
                     </div>
                     <div>
-                      <label>住宅用地特例 (%)</label>
+                      {renderLabel("住宅用地特例 (%)", "landTaxReductionRate")}
                       <input
                         type="number"
                         step="0.01"
@@ -1840,7 +2132,7 @@ export const SimulationForm: React.FC<Props> = ({
                       <p className="form-note">※1/6なら16.67%</p>
                     </div>
                     <div>
-                      <label>固定資産税・都市計画税率 (%)</label>
+                      {renderLabel("固定資産税・都市計画税率 (%)", "propertyTaxRate")}
                       <input
                         type="number"
                         step="0.01"
@@ -1871,7 +2163,7 @@ export const SimulationForm: React.FC<Props> = ({
                 <>
                   <div className="form-grid two-col compact">
                     <div>
-                      <label>空室モデル</label>
+                      {renderHelpLabel("空室モデル", "vacancyModel")}
                       <select
                         value={vacancyModel}
                         onChange={(e) => handleChange("vacancyModel", e.target.value)}
@@ -1946,7 +2238,7 @@ export const SimulationForm: React.FC<Props> = ({
 
                   <div className="repair-block">
                     <div className="inline-toggle form-split-row">
-                      <label>修繕イベント</label>
+                      {renderHelpLabel("修繕イベント", "repairEvents")}
                       <button type="button" className="section-toggle" onClick={addRepairEvent}>
                         追加
                       </button>
@@ -1958,7 +2250,7 @@ export const SimulationForm: React.FC<Props> = ({
                         <div key={`${event.year}-${index}`} className="repair-row">
                           <div className="form-grid three-col">
                             <div>
-                              <label>年</label>
+                              {renderHelpLabel("年", "repairEventYear")}
                               <input
                                 type="number"
                                 value={event.year}
@@ -1968,7 +2260,7 @@ export const SimulationForm: React.FC<Props> = ({
                               />
                             </div>
                             <div>
-                              <label>金額 (万円)</label>
+                              {renderHelpLabel("金額 (万円)", "repairEventAmount")}
                               <input
                                 type="number"
                                 value={event.amount / 10000}
@@ -1978,7 +2270,7 @@ export const SimulationForm: React.FC<Props> = ({
                               />
                             </div>
                             <div>
-                              <label>内容</label>
+                              {renderHelpLabel("内容", "repairEventLabel")}
                               <input
                                 type="text"
                                 value={event.label ?? ""}
@@ -1999,19 +2291,20 @@ export const SimulationForm: React.FC<Props> = ({
                   </div>
                   <div className="form-divider" />
                   <div className="form-subtitle">リスクシナリオ比較</div>
-                  <div className="inline-toggle form-split-row">
-                    <div className="inline-toggle">
-                      <input
-                        type="checkbox"
-                        id="scenarioEnabled"
-                        checked={formData.scenarioEnabled}
-                        onChange={(e) => handleChange("scenarioEnabled", e.target.checked)}
-                      />
-                      <label htmlFor="scenarioEnabled" className="inline-label">
-                        有効にする
-                      </label>
+                    <div className="inline-toggle form-split-row">
+                      <div className="inline-toggle">
+                        <input
+                          type="checkbox"
+                          id="scenarioEnabled"
+                          checked={formData.scenarioEnabled}
+                          onChange={(e) => handleChange("scenarioEnabled", e.target.checked)}
+                        />
+                        <label htmlFor="scenarioEnabled" className="inline-label">
+                          有効にする
+                          {renderInfoButton("scenarioEnabled", "有効にする")}
+                        </label>
+                      </div>
                     </div>
-                  </div>
                   <p className="form-note">
                     金利上昇・家賃下落カーブ・入居率悪化を組み合わせたストレスシナリオを比較します。
                   </p>
@@ -2019,7 +2312,7 @@ export const SimulationForm: React.FC<Props> = ({
                     <>
                       <div className="form-grid three-col compact">
                         <div>
-                          <label>金利上昇年</label>
+                          {renderHelpLabel("金利上昇年", "scenarioInterestShockYear")}
                           <input
                             type="number"
                             value={displayValue(scenarioInterestShockYear)}
@@ -2029,7 +2322,7 @@ export const SimulationForm: React.FC<Props> = ({
                           />
                         </div>
                         <div>
-                          <label>金利上昇幅 (%)</label>
+                          {renderHelpLabel("金利上昇幅 (%)", "scenarioInterestShockDelta")}
                           <input
                             type="number"
                             step="0.1"
@@ -2040,7 +2333,7 @@ export const SimulationForm: React.FC<Props> = ({
                           />
                         </div>
                         <div>
-                          <label>家賃下落カーブ</label>
+                          {renderHelpLabel("家賃下落カーブ", "scenarioRentCurveEnabled")}
                           <div className="inline-toggle">
                             <input
                               type="checkbox"
@@ -2052,6 +2345,7 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                             <label htmlFor="scenarioRentCurve" className="inline-label">
                               有効
+                              {renderInfoButton("scenarioRentCurveEnabled", "有効")}
                             </label>
                           </div>
                         </div>
@@ -2059,7 +2353,7 @@ export const SimulationForm: React.FC<Props> = ({
                       {formData.scenarioRentCurveEnabled ? (
                         <div className="form-grid three-col compact">
                           <div>
-                            <label>初期下落率 (2年ごと/%)</label>
+                            {renderHelpLabel("初期下落率 (2年ごと/%)", "scenarioRentDeclineEarlyRate")}
                             <input
                               type="number"
                               step="0.1"
@@ -2070,7 +2364,7 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                           </div>
                           <div>
-                            <label>後半下落率 (2年ごと/%)</label>
+                            {renderHelpLabel("後半下落率 (2年ごと/%)", "scenarioRentDeclineLateRate")}
                             <input
                               type="number"
                               step="0.1"
@@ -2081,7 +2375,7 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                           </div>
                           <div>
-                            <label>切替年</label>
+                            {renderHelpLabel("切替年", "scenarioRentDeclineSwitchYear")}
                             <input
                               type="number"
                               value={displayValue(scenarioRentDeclineSwitchYear)}
@@ -2094,7 +2388,7 @@ export const SimulationForm: React.FC<Props> = ({
                       ) : null}
                       <div className="form-grid three-col compact">
                         <div>
-                          <label>入居率悪化</label>
+                          {renderHelpLabel("入居率悪化", "scenarioOccupancyDeclineEnabled")}
                           <div className="inline-toggle">
                             <input
                               type="checkbox"
@@ -2106,11 +2400,12 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                             <label htmlFor="scenarioOccupancy" className="inline-label">
                               有効
+                              {renderInfoButton("scenarioOccupancyDeclineEnabled", "有効")}
                             </label>
                           </div>
                         </div>
                         <div>
-                          <label>悪化開始年</label>
+                          {renderHelpLabel("悪化開始年", "scenarioOccupancyDeclineStartYear")}
                           <input
                             type="number"
                             value={displayValue(scenarioOccupancyDeclineStartYear)}
@@ -2123,7 +2418,7 @@ export const SimulationForm: React.FC<Props> = ({
                           />
                         </div>
                         <div>
-                          <label>入居率低下幅 (%)</label>
+                          {renderHelpLabel("入居率低下幅 (%)", "scenarioOccupancyDeclineDelta")}
                           <input
                             type="number"
                             step="0.1"
@@ -2172,7 +2467,7 @@ export const SimulationForm: React.FC<Props> = ({
                       {/* 設備分離設定 [cite: 666-667] */}
                       <div className="form-advanced-block">
                         <div className="inline-toggle form-split-row">
-                          <label>減価償却の設備分離</label>
+                          {renderHelpLabel("減価償却の設備分離", "enableEquipmentSplit")}
                           <div className="inline-toggle">
                             <input
                               type="checkbox"
@@ -2182,6 +2477,7 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                             <label htmlFor="equipmentSplit" className="inline-label">
                               有効にする
+                              {renderInfoButton("enableEquipmentSplit", "有効にする")}
                             </label>
                           </div>
                         </div>
@@ -2192,7 +2488,7 @@ export const SimulationForm: React.FC<Props> = ({
                           <>
                             <div className="form-grid two-col">
                               <div>
-                                <label>設備比率 (%)</label>
+                                {renderHelpLabel("設備比率 (%)", "equipmentRatio")}
                                 <input
                                   type="number"
                                   value={displayPercent(formData.equipmentRatio)}
@@ -2202,7 +2498,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 />
                               </div>
                               <div>
-                                <label>設備耐用年数 (年)</label>
+                                {renderHelpLabel("設備耐用年数 (年)", "equipmentUsefulLife")}
                                 <input
                                   type="number"
                                   value={displayValue(equipmentUsefulLifeValue)}
@@ -2219,7 +2515,7 @@ export const SimulationForm: React.FC<Props> = ({
 
                       {/* 税務設定 [cite: 670-671] */}
                       <div className="form-advanced-block">
-                        <label>税務モード</label>
+                        {renderHelpLabel("税務モード", "taxType")}
                         <div className="form-grid two-col">
                           <label className="inline-label">
                             <input
@@ -2230,6 +2526,7 @@ export const SimulationForm: React.FC<Props> = ({
                               onChange={() => handleChange("taxType", "INDIVIDUAL")}
                             />
                             <span>個人 (累進課税)</span>
+                            {renderInfoButton("taxTypeIndividual", "個人 (累進課税)")}
                           </label>
                           <label className="inline-label">
                             <input
@@ -2240,11 +2537,12 @@ export const SimulationForm: React.FC<Props> = ({
                               onChange={() => handleChange("taxType", "CORPORATE")}
                             />
                             <span>法人 (実効税率+均等割)</span>
+                            {renderInfoButton("taxTypeCorporate", "法人 (実効税率+均等割)")}
                           </label>
                         </div>
                         <div className="form-grid two-col">
                           <div>
-                            <label>他所得 (給与など/万円)</label>
+                            {renderHelpLabel("他所得 (給与など/万円)", "otherIncome")}
                             <input
                               type="number"
                               value={displayValue(otherIncomeValue, 10000)}
@@ -2255,7 +2553,7 @@ export const SimulationForm: React.FC<Props> = ({
                             <p className="form-note">累進課税 + 住民税10%で計算</p>
                           </div>
                           <div>
-                            <label>法人均等割 (万円/年)</label>
+                            {renderHelpLabel("法人均等割 (万円/年)", "corporateMinimumTax")}
                             <input
                               type="number"
                               value={displayValue(corporateMinimumTaxValue, 10000)}
@@ -2271,7 +2569,7 @@ export const SimulationForm: React.FC<Props> = ({
                       {/* 出口戦略（売却） */}
                       <div className="form-advanced-block">
                         <div className="inline-toggle form-split-row">
-                          <label>出口戦略（売却）</label>
+                          {renderHelpLabel("出口戦略（売却）", "exitEnabled")}
                           <div className="inline-toggle">
                             <input
                               type="checkbox"
@@ -2281,6 +2579,7 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                             <label htmlFor="exitEnabled" className="inline-label">
                               有効にする
+                              {renderInfoButton("exitEnabled", "有効にする")}
                             </label>
                           </div>
                         </div>
@@ -2291,7 +2590,7 @@ export const SimulationForm: React.FC<Props> = ({
                           <>
                             <div className="form-grid two-col">
                               <div>
-                                <label>売却年数 (年)</label>
+                                {renderHelpLabel("売却年数 (年)", "exitYear")}
                                 <input
                                   type="number"
                                   value={displayValue(exitYearValue)}
@@ -2299,7 +2598,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 />
                               </div>
                               <div>
-                                <label>想定キャップレート (%)</label>
+                                {renderHelpLabel("想定キャップレート (%)", "exitCapRate")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -2312,7 +2611,7 @@ export const SimulationForm: React.FC<Props> = ({
                             </div>
                             <div className="form-grid two-col">
                               <div>
-                                <label>仲介手数料率 (%)</label>
+                                {renderHelpLabel("仲介手数料率 (%)", "exitBrokerageRate")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -2323,7 +2622,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 />
                               </div>
                               <div>
-                                <label>仲介手数料 (定額/万円)</label>
+                                {renderHelpLabel("仲介手数料 (定額/万円)", "exitBrokerageFixed")}
                                 <input
                                   type="number"
                                   value={displayValue(exitBrokerageFixedValue, 10000)}
@@ -2335,7 +2634,7 @@ export const SimulationForm: React.FC<Props> = ({
                             </div>
                             <div className="form-grid two-col">
                               <div>
-                                <label>その他売却コスト率 (%)</label>
+                                {renderHelpLabel("その他売却コスト率 (%)", "exitOtherCostRate")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -2347,7 +2646,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 <p className="form-note">修繕・測量・登記などの概算</p>
                               </div>
                               <div>
-                                <label>NPV割引率 (%)</label>
+                                {renderHelpLabel("NPV割引率 (%)", "exitDiscountRate")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -2360,7 +2659,7 @@ export const SimulationForm: React.FC<Props> = ({
                             </div>
                             <div className="form-grid two-col">
                               <div>
-                                <label>短期譲渡税率 (%)</label>
+                                {renderHelpLabel("短期譲渡税率 (%)", "exitShortTermTaxRate")}
                                 <input
                                   type="number"
                                   step="0.1"
@@ -2371,7 +2670,7 @@ export const SimulationForm: React.FC<Props> = ({
                                 />
                               </div>
                               <div>
-                                <label>長期譲渡税率 (%)</label>
+                                {renderHelpLabel("長期譲渡税率 (%)", "exitLongTermTaxRate")}
                                 <input
                                   type="number"
                                   step="0.1"

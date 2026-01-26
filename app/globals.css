@@ -977,6 +977,12 @@ a {
   width: 100%;
 }
 
+.listing-panel .listing-card {
+  background: #f1fbf6;
+  border: 1px solid rgba(15, 118, 110, 0.25);
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.08);
+}
+
 .listing-card--large {
   display: flex;
   align-items: flex-start;
@@ -1202,6 +1208,78 @@ a {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.input-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.input-label-text {
+  display: inline-flex;
+  align-items: center;
+}
+
+.input-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.input-info-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.input-info-btn:hover {
+  border-color: rgba(20, 106, 93, 0.55);
+  color: #0f766e;
+}
+
+.input-info-popover {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  z-index: 80;
+  width: min(360px, 86vw);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+  white-space: normal;
+  word-break: break-word;
+}
+
+.input-info-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-1);
+  margin-bottom: 4px;
+}
+
+.input-info-text {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-line;
+}
+
+.input-info-note {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--ink-3);
 }
 
 .auto-pill {
@@ -1282,6 +1360,9 @@ a {
 }
 
 .oer-box-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 700;
   color: var(--ink-2);
@@ -1490,7 +1571,7 @@ a {
 
 .breakdown-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .breakdown-head {
@@ -1656,12 +1737,12 @@ a {
 
 .table-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .exit-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .exit-body {
@@ -1672,7 +1753,7 @@ a {
 
 .scenario-card {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .scenario-body {
@@ -1782,6 +1863,66 @@ a {
   padding: 10px 12px;
   display: grid;
   gap: 4px;
+  position: relative;
+}
+
+.kpi-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kpi-info-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 118, 110, 0.35);
+  background: #f1fbf6;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.kpi-popover {
+  position: absolute;
+  top: 28px;
+  right: 8px;
+  min-width: 200px;
+  max-width: 260px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  box-shadow: 0 12px 24px rgba(15, 118, 110, 0.12);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  z-index: 3;
+}
+
+.kpi-popover-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.kpi-popover-text {
+  font-size: 10px;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.kpi-popover-note {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.kpi-popover-detail {
+  font-size: 10px;
+  color: var(--ink-2);
+  margin: 0;
 }
 
 .kpi-score {
@@ -1862,6 +2003,7 @@ a {
   color: var(--ink-3);
 }
 
+
 .table-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1911,14 +2053,18 @@ a {
 
 .table-scroll {
   overflow-x: auto;
+  overflow-y: visible;
   padding: 12px 16px 16px;
   max-width: 100%;
+  position: relative;
 }
 
 .sheet-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 900px;
+  position: relative;
+  z-index: 0;
 }
 
 .sheet-table th,
@@ -1927,6 +2073,8 @@ a {
   padding: 6px 8px;
   font-size: 12px;
   line-height: 1.2;
+  position: relative;
+  overflow: visible;
 }
 
 .sheet-table thead th {
@@ -1945,10 +2093,35 @@ a {
   text-align: left;
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 6;
   font-family: var(--font-body), sans-serif;
   white-space: nowrap;
   min-width: 120px;
+  overflow: visible;
+}
+
+.sheet-table .row-title .row-title-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sheet-table .row-title .input-info {
+  position: static;
+}
+
+.sheet-table .row-title .input-info-btn {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+}
+
+.sheet-table .row-title .input-info-popover {
+  width: min(360px, 86vw);
+  z-index: 120;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .sheet-table .section-row td {
