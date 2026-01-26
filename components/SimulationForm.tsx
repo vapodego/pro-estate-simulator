@@ -1,7 +1,14 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { PropertyInput, StructureType, LEGAL_USEFUL_LIFE } from "../utils/types";
+import {
+  PropertyInput,
+  StructureType,
+  LEGAL_USEFUL_LIFE,
+  OerRateItem,
+  OerFixedItem,
+  OerEventItem,
+} from "../utils/types";
 import { getSuggestedBuildingRatio } from "../utils/estimates";
 
 // 構造の選択肢定義
@@ -13,11 +20,121 @@ const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
   { label: "木造", value: "WOOD" },
 ];
 
+type OerPropertyType = "UNIT" | "WOOD_APARTMENT" | "STEEL_APARTMENT" | "RC_APARTMENT";
+type OerAgeBand = "NEW" | "MID" | "OLD";
+
+const OER_PROPERTY_OPTIONS: { label: string; value: OerPropertyType }[] = [
+  { label: "区分マンション", value: "UNIT" },
+  { label: "一棟アパート(木造)", value: "WOOD_APARTMENT" },
+  { label: "一棟アパート(鉄骨)", value: "STEEL_APARTMENT" },
+  { label: "一棟マンション(RC)", value: "RC_APARTMENT" },
+];
+
+const OER_AGE_BANDS: { label: string; value: OerAgeBand; maxAge: number }[] = [
+  { label: "築浅(〜10年)", value: "NEW", maxAge: 10 },
+  { label: "築10〜20年", value: "MID", maxAge: 20 },
+  { label: "築20年以上", value: "OLD", maxAge: Number.POSITIVE_INFINITY },
+];
+
+const OER_TEMPLATES: Record<OerPropertyType, Record<OerAgeBand, { exclTax: number; inclTax: number }>> = {
+  UNIT: {
+    NEW: { exclTax: 16, inclTax: 24 },
+    MID: { exclTax: 18, inclTax: 28 },
+    OLD: { exclTax: 22, inclTax: 32 },
+  },
+  WOOD_APARTMENT: {
+    NEW: { exclTax: 11, inclTax: 15 },
+    MID: { exclTax: 16, inclTax: 21 },
+    OLD: { exclTax: 24, inclTax: 29 },
+  },
+  STEEL_APARTMENT: {
+    NEW: { exclTax: 14, inclTax: 19 },
+    MID: { exclTax: 20, inclTax: 26 },
+    OLD: { exclTax: 26, inclTax: 32 },
+  },
+  RC_APARTMENT: {
+    NEW: { exclTax: 15, inclTax: 20 },
+    MID: { exclTax: 21, inclTax: 26 },
+    OLD: { exclTax: 29, inclTax: 34 },
+  },
+};
+
+const OER_AD_BONUS = 5;
+const OER_REPAIR_BONUS = 5;
+const OER_BUFFER_BONUS = 5;
+const OER_REPAIR_RATE: Record<OerAgeBand, number> = {
+  NEW: 2,
+  MID: 4,
+  OLD: 6,
+};
+const OER_UNIT_MGMT_RATE: Record<OerAgeBand, number> = {
+  NEW: 12,
+  MID: 14,
+  OLD: 18,
+};
+const OER_INSURANCE_RATE: Record<OerPropertyType, number> = {
+  UNIT: 1.0,
+  WOOD_APARTMENT: 1.5,
+  STEEL_APARTMENT: 1.2,
+  RC_APARTMENT: 1.0,
+};
+const OER_LEASING_DEFAULTS: Record<OerAgeBand, { months: number; tenancyYears: number }> = {
+  NEW: { months: 1.0, tenancyYears: 3 },
+  MID: { months: 1.5, tenancyYears: 2.5 },
+  OLD: { months: 2.0, tenancyYears: 2 },
+};
+
+const getCleaningMonthlyCost = (unitCount: number, visitsPerMonth: number) => {
+  if (!Number.isFinite(unitCount) || unitCount <= 0) return null;
+  const normalizedVisits = visitsPerMonth >= 4 ? 4 : 2;
+  if (unitCount >= 9 && unitCount <= 12) {
+    return normalizedVisits === 2 ? 12700 : 18000;
+  }
+  if (unitCount >= 13 && unitCount <= 16) {
+    return normalizedVisits === 2 ? 15600 : 23400;
+  }
+  return null;
+};
+
+const inferOerAgeBand = (age: number): OerAgeBand => {
+  const safeAge = Number.isFinite(age) ? Math.max(0, Math.floor(age)) : 0;
+  const matched = OER_AGE_BANDS.find((band) => safeAge <= band.maxAge);
+  return matched?.value ?? "OLD";
+};
+
+const inferOerPropertyType = (
+  propertyType: string | null | undefined,
+  structure: StructureType
+): OerPropertyType => {
+  const normalized = (propertyType ?? "").replace(/\s/g, "");
+  if (normalized.includes("区分")) return "UNIT";
+  if (normalized.includes("マンション")) return "RC_APARTMENT";
+  if (normalized.includes("アパート")) {
+    if (structure === "S_HEAVY" || structure === "S_LIGHT") return "STEEL_APARTMENT";
+    if (structure === "RC" || structure === "SRC") return "RC_APARTMENT";
+    return "WOOD_APARTMENT";
+  }
+  if (structure === "S_HEAVY" || structure === "S_LIGHT") return "STEEL_APARTMENT";
+  if (structure === "RC" || structure === "SRC") return "RC_APARTMENT";
+  return "WOOD_APARTMENT";
+};
 
 type ListingPreview = {
   title: string | null;
   propertyType: string | null;
   address: string | null;
+  access?: string | null;
+  structure?: string | null;
+  builtYearMonth?: string | null;
+  landRight?: string | null;
+  transactionType?: string | null;
+  priceYen?: number | null;
+  yieldPercent?: number | null;
+  annualRentYen?: number | null;
+  monthlyRentYen?: number | null;
+  buildingAgeYears?: number | null;
+  floorAreaSqm?: number | null;
+  landAreaSqm?: number | null;
   imageUrl: string | null;
 };
 
@@ -41,7 +158,6 @@ export const SimulationForm: React.FC<Props> = ({
   const [formData, setFormData] = useState<PropertyInput>(initialData);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [listingImageError, setListingImageError] = useState(false);
   const isBlankInput = (data: PropertyInput) =>
     data.price === 0 &&
     data.loanAmount === 0 &&
@@ -49,20 +165,56 @@ export const SimulationForm: React.FC<Props> = ({
     data.buildingRatio === 0;
   const [isPristine, setIsPristine] = useState(() => isBlankInput(initialData));
   const [buildingRatioTouched, setBuildingRatioTouched] = useState(false);
+  const [oerTypeTouched, setOerTypeTouched] = useState(false);
+  const [oerAgeTouched, setOerAgeTouched] = useState(false);
+  const [listingImageError, setListingImageError] = useState(false);
+  const [oerPropertyType, setOerPropertyType] = useState<OerPropertyType>(() =>
+    inferOerPropertyType(listing?.propertyType, initialData.structure)
+  );
+  const [oerAgeBand, setOerAgeBand] = useState<OerAgeBand>(() =>
+    inferOerAgeBand(initialData.buildingAge)
+  );
+  const [showOerTemplateTable, setShowOerTemplateTable] = useState(false);
   const [openPanels, setOpenPanels] = useState({
     basic: true,
-    finance: true,
+    loan: true,
+    oer: true,
     initial: true,
     repair: true,
-    scenario: true,
     advanced: true,
-    tax: true,
   });
   const displayValue = (value: number, scale = 1) =>
     isPristine && value === 0 ? "" : value / scale;
   const displayPercent = (value: number) => (isPristine && value === 0 ? "" : value);
   const autoFilledSet = useMemo(() => new Set(autoFilledKeys), [autoFilledKeys]);
   const isAutoFilled = (key: keyof PropertyInput) => autoFilledSet.has(key);
+  const renderLabel = (text: string, key: keyof PropertyInput) => (
+    <label className={isAutoFilled(key) ? "auto-label" : undefined}>
+      {text}
+      {isAutoFilled(key) ? <span className="auto-pill">推定</span> : null}
+    </label>
+  );
+  const formatManYen = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return null;
+    const man = Math.round((value / 10000) * 10) / 10;
+    const hasDecimal = Math.abs(man % 1) > 0;
+    return `${man.toLocaleString("ja-JP", {
+      minimumFractionDigits: hasDecimal ? 1 : 0,
+      maximumFractionDigits: 1,
+    })}万円`;
+  };
+  const formatPercent = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return null;
+    return `${value.toFixed(2)}%`;
+  };
+  const formatArea = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return null;
+    const rounded = Math.round(value * 100) / 100;
+    return `${rounded.toLocaleString("ja-JP", {
+      minimumFractionDigits: rounded % 1 ? 2 : 0,
+      maximumFractionDigits: 2,
+    })}㎡`;
+  };
   const listingUrlLabel = useMemo(() => {
     if (!listingUrl) return "";
     try {
@@ -75,19 +227,57 @@ export const SimulationForm: React.FC<Props> = ({
   }, [listingUrl]);
   const listingImageSrc =
     listing?.imageUrl && listingUrl
-      ? `/api/rakumachi-image?url=${encodeURIComponent(listing.imageUrl)}&ref=${encodeURIComponent(
-          listingUrl
-        )}`
+      ? `/api/rakumachi-image?url=${encodeURIComponent(
+          listing.imageUrl
+        )}&ref=${encodeURIComponent(listingUrl)}`
       : null;
-  const renderLabel = (text: string, key: keyof PropertyInput) => (
-    <label className={isAutoFilled(key) ? "auto-label" : undefined}>
-      {text}
-      {isAutoFilled(key) ? <span className="auto-pill">推定</span> : null}
-    </label>
-  );
+  const listingPriceText = formatManYen(listing?.priceYen ?? null);
+  const listingYieldText = formatPercent(listing?.yieldPercent ?? null);
+  const listingAnnualText = formatManYen(listing?.annualRentYen ?? null);
+  const listingMonthlyText = formatManYen(listing?.monthlyRentYen ?? null);
+  const listingIncomeText = listingAnnualText
+    ? `${listingAnnualText}${listingMonthlyText ? ` (${listingMonthlyText}/月)` : ""}`
+    : listingMonthlyText
+      ? `${listingMonthlyText}/月`
+      : null;
+  const listingBuiltText = (() => {
+    if (listing?.builtYearMonth && listing?.buildingAgeYears) {
+      return `${listing.builtYearMonth} (築${listing.buildingAgeYears}年)`;
+    }
+    if (listing?.builtYearMonth) return listing.builtYearMonth;
+    if (listing?.buildingAgeYears) return `築${listing.buildingAgeYears}年`;
+    return null;
+  })();
+  const listingFloorAreaText = formatArea(listing?.floorAreaSqm ?? null);
+  const listingLandAreaText = formatArea(listing?.landAreaSqm ?? null);
+  const listingFactsLeft = [
+    { label: "販売価格", value: listingPriceText },
+    { label: "表面利回り", value: listingYieldText },
+    { label: "想定年間収入", value: listingIncomeText },
+    { label: "所在地", value: listing?.address ?? null },
+    { label: "交通", value: listing?.access ?? null },
+  ].filter((item) => Boolean(item.value));
+  const listingFactsRight = [
+    { label: "建物構造", value: listing?.structure ?? null },
+    { label: "築年月", value: listingBuiltText },
+    { label: "土地権利", value: listing?.landRight ?? null },
+    { label: "建物面積", value: listingFloorAreaText },
+    { label: "土地面積", value: listingLandAreaText },
+    { label: "取引態様", value: listing?.transactionType ?? null },
+  ].filter((item) => Boolean(item.value));
+  useEffect(() => {
+    if (oerTypeTouched) return;
+    setOerPropertyType(inferOerPropertyType(listing?.propertyType, formData.structure));
+  }, [listing?.propertyType, formData.structure, oerTypeTouched]);
+
   useEffect(() => {
     setListingImageError(false);
   }, [listing?.imageUrl, listingUrl]);
+
+  useEffect(() => {
+    if (oerAgeTouched) return;
+    setOerAgeBand(inferOerAgeBand(formData.buildingAge));
+  }, [formData.buildingAge, oerAgeTouched]);
   const legalLife = LEGAL_USEFUL_LIFE[formData.structure];
   const miscCostRate = Number.isFinite(formData.miscCostRate)
     ? formData.miscCostRate
@@ -121,7 +311,7 @@ export const SimulationForm: React.FC<Props> = ({
     : initialData.landTaxReductionRate ?? 16.67;
   const propertyTaxRate = Number.isFinite(formData.propertyTaxRate)
     ? formData.propertyTaxRate
-    : initialData.propertyTaxRate ?? 1.4;
+    : initialData.propertyTaxRate ?? 1.7;
   const equipmentUsefulLifeValue = Number.isFinite(formData.equipmentUsefulLife)
     ? formData.equipmentUsefulLife
     : initialData.equipmentUsefulLife ?? 15;
@@ -215,9 +405,70 @@ export const SimulationForm: React.FC<Props> = ({
   );
   const estimatedTotal = formData.price + initialCostsTotal;
   const annualFullRent = formData.monthlyRent * 12;
+  const oerTemplate = OER_TEMPLATES[oerPropertyType][oerAgeBand];
+  const oerBase = oerTemplate.exclTax;
   const repairEvents = Array.isArray(formData.repairEvents)
     ? formData.repairEvents
     : initialData.repairEvents ?? [];
+  const oerModeValue = formData.oerMode ?? "SIMPLE";
+  const oerRateItems = Array.isArray(formData.oerRateItems) ? formData.oerRateItems : [];
+  const oerFixedItems = Array.isArray(formData.oerFixedItems) ? formData.oerFixedItems : [];
+  const oerEventItems = Array.isArray(formData.oerEventItems) ? formData.oerEventItems : [];
+  const oerLeasingEnabledValue =
+    typeof formData.oerLeasingEnabled === "boolean" ? formData.oerLeasingEnabled : true;
+  const unitCountValue = Number.isFinite(formData.unitCount) ? formData.unitCount : 0;
+  const cleaningVisitsPerMonthValue =
+    Number.isFinite(formData.cleaningVisitsPerMonth) && formData.cleaningVisitsPerMonth > 0
+      ? formData.cleaningVisitsPerMonth
+      : 2;
+  const cleaningMonthlyCost = getCleaningMonthlyCost(
+    unitCountValue,
+    cleaningVisitsPerMonthValue
+  );
+  const oerIncludeAd = oerLeasingEnabledValue;
+  const oerIncludeRepair = true;
+  const oerIncludeBuffer = true;
+  const oerLeasingMonthsValue = Number.isFinite(formData.oerLeasingMonths)
+    ? formData.oerLeasingMonths
+    : initialData.oerLeasingMonths ?? 2;
+  const oerLeasingTenancyYearsValue = Number.isFinite(formData.oerLeasingTenancyYears)
+    ? formData.oerLeasingTenancyYears
+    : initialData.oerLeasingTenancyYears ?? 2;
+  const oerLeasingRate =
+    oerLeasingEnabledValue &&
+    oerLeasingMonthsValue > 0 &&
+    oerLeasingTenancyYearsValue > 0
+      ? (oerLeasingMonthsValue / (oerLeasingTenancyYearsValue * 12)) * 100
+      : 0;
+  const oerExtras =
+    (oerIncludeAd ? OER_AD_BONUS : 0) +
+    (oerIncludeRepair ? OER_REPAIR_BONUS : 0) +
+    (oerIncludeBuffer ? OER_BUFFER_BONUS : 0);
+  const oerSuggested = Math.max(0, oerBase + oerExtras);
+  const oerSuggestedRounded = Number(oerSuggested.toFixed(1));
+
+  useEffect(() => {
+    if (oerModeValue !== "DETAILED") return;
+    if (!cleaningMonthlyCost) return;
+    if (oerPropertyType === "UNIT") return;
+    const cleaningAnnual = Math.round(cleaningMonthlyCost * 12);
+    const targetIndex = oerFixedItems.findIndex((item) => item.label === "清掃・建物管理");
+    if (targetIndex === -1) return;
+    if (oerFixedItems[targetIndex]?.annualAmount === cleaningAnnual) return;
+    const nextItems = oerFixedItems.map((item, index) =>
+      index === targetIndex ? { ...item, annualAmount: cleaningAnnual } : item
+    );
+    const nextData = { ...formData, oerFixedItems: nextItems };
+    setFormData(nextData);
+    onCalculate(nextData);
+  }, [
+    cleaningMonthlyCost,
+    oerModeValue,
+    oerPropertyType,
+    oerFixedItems,
+    formData,
+    onCalculate,
+  ]);
 
   useEffect(() => {
     const nextPristine = isBlankInput(initialData);
@@ -277,7 +528,7 @@ export const SimulationForm: React.FC<Props> = ({
       : initialData.landTaxReductionRate ?? 16.67;
     const taxRate = Number.isFinite(formData.propertyTaxRate)
       ? formData.propertyTaxRate
-      : initialData.propertyTaxRate ?? 1.4;
+      : initialData.propertyTaxRate ?? 1.7;
     const incomeRate = Number.isFinite(formData.incomeTaxRate)
       ? formData.incomeTaxRate
       : initialData.incomeTaxRate ?? 20;
@@ -491,6 +742,260 @@ export const SimulationForm: React.FC<Props> = ({
     handleChange("buildingRatio", value);
   };
 
+  const createOerId = (prefix: string) =>
+    `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now()}`;
+
+  const buildOerPreset = () => {
+    const repairRate = OER_REPAIR_RATE[oerAgeBand];
+    const unitMgmtRate = OER_UNIT_MGMT_RATE[oerAgeBand];
+    const insuranceRate = OER_INSURANCE_RATE[oerPropertyType];
+    const leasingDefaults = OER_LEASING_DEFAULTS[oerAgeBand];
+    const rateItems: OerRateItem[] = [
+      { id: createOerId("pm"), label: "PM手数料", rate: 5, base: "GPR", enabled: true },
+      {
+        id: createOerId("insurance"),
+        label: "保険",
+        rate: insuranceRate,
+        base: "GPR",
+        enabled: true,
+      },
+    ];
+    if (oerIncludeRepair) {
+      rateItems.push({
+        id: createOerId("repair"),
+        label: "小修繕積立",
+        rate: repairRate,
+        base: "GPR",
+        enabled: false,
+      });
+    }
+    if (oerPropertyType === "UNIT") {
+      rateItems.push({
+        id: createOerId("unit"),
+        label: "管理費・修繕積立金",
+        rate: unitMgmtRate,
+        base: "GPR",
+        enabled: true,
+      });
+    }
+    if (oerIncludeBuffer) {
+      rateItems.push({
+        id: createOerId("buffer"),
+        label: "予備費",
+        rate: OER_BUFFER_BONUS,
+        base: "GPR",
+        enabled: false,
+      });
+    }
+
+    const fixedItems: OerFixedItem[] = [];
+    if (oerPropertyType !== "UNIT") {
+      const baseCleaning =
+        oerPropertyType === "RC_APARTMENT"
+          ? 420000
+          : oerPropertyType === "STEEL_APARTMENT"
+          ? 300000
+          : 240000;
+      const cleaningAnnual = cleaningMonthlyCost
+        ? Math.round(cleaningMonthlyCost * 12)
+        : baseCleaning;
+      fixedItems.push({
+        id: createOerId("clean"),
+        label: "清掃・建物管理",
+        annualAmount: cleaningAnnual,
+        enabled: true,
+      });
+      fixedItems.push({
+        id: createOerId("power"),
+        label: "共用部電気",
+        annualAmount: oerPropertyType === "RC_APARTMENT" ? 60000 : 36000,
+        enabled: true,
+      });
+      fixedItems.push({
+        id: createOerId("fire"),
+        label: "消防点検",
+        annualAmount: oerPropertyType === "RC_APARTMENT" ? 80000 : 50000,
+        enabled: true,
+      });
+      if (oerPropertyType === "RC_APARTMENT") {
+        fixedItems.push({
+          id: createOerId("elevator"),
+          label: "EV保守",
+          annualAmount: 480000,
+          enabled: false,
+        });
+        fixedItems.push({
+          id: createOerId("water"),
+          label: "受水槽",
+          annualAmount: 90000,
+          enabled: false,
+        });
+      }
+    }
+
+    const eventItems: OerEventItem[] = [];
+    if (oerIncludeRepair && oerPropertyType !== "UNIT") {
+      const eventAmount =
+        oerPropertyType === "RC_APARTMENT"
+          ? 2500000
+          : oerPropertyType === "STEEL_APARTMENT"
+          ? 1500000
+          : 1200000;
+      eventItems.push({
+        id: createOerId("major"),
+        label: "外壁・防水",
+        amount: eventAmount,
+        intervalYears: 12,
+        startYear: 12,
+        mode: "RESERVE",
+        enabled: true,
+      });
+    }
+
+    return {
+      rateItems,
+      fixedItems,
+      eventItems,
+      leasingEnabled: oerIncludeAd,
+      leasingMonths: leasingDefaults.months,
+      leasingTenancyYears: leasingDefaults.tenancyYears,
+    };
+  };
+
+  const applyOerPreset = (mode: "SIMPLE" | "DETAILED") => {
+    if (mode === "SIMPLE") {
+      handleChange("operatingExpenseRate", oerSuggestedRounded);
+      return;
+    }
+    const preset = buildOerPreset();
+    const next: PropertyInput = {
+      ...formData,
+      oerMode: "DETAILED",
+      oerRateItems: preset.rateItems,
+      oerFixedItems: preset.fixedItems,
+      oerEventItems: preset.eventItems,
+      oerLeasingEnabled: preset.leasingEnabled,
+      oerLeasingMonths: preset.leasingMonths,
+      oerLeasingTenancyYears: preset.leasingTenancyYears,
+    };
+    setFormData(next);
+    setIsPristine(false);
+    onCalculate(next);
+  };
+
+  const handleOerModeChange = (mode: "SIMPLE" | "DETAILED") => {
+    if (mode === oerModeValue) return;
+    if (mode === "DETAILED" && oerRateItems.length === 0 && oerFixedItems.length === 0) {
+      applyOerPreset("DETAILED");
+      return;
+    }
+    handleChange("oerMode", mode);
+  };
+
+  const updateOerRateItem = (id: string, patch: Partial<OerRateItem>) => {
+    const next = oerRateItems.map((item) => (item.id === id ? { ...item, ...patch } : item));
+    handleChange("oerRateItems", next);
+  };
+  const updateOerFixedItem = (id: string, patch: Partial<OerFixedItem>) => {
+    const next = oerFixedItems.map((item) => (item.id === id ? { ...item, ...patch } : item));
+    handleChange("oerFixedItems", next);
+  };
+  const updateOerEventItem = (id: string, patch: Partial<OerEventItem>) => {
+    const next = oerEventItems.map((item) => (item.id === id ? { ...item, ...patch } : item));
+    handleChange("oerEventItems", next);
+  };
+  const addOerRateItem = () => {
+    const next = [
+      ...oerRateItems,
+      { id: createOerId("rate"), label: "費目", rate: 0, base: "GPR", enabled: true },
+    ];
+    handleChange("oerRateItems", next);
+  };
+  const addOerFixedItem = () => {
+    const next = [
+      ...oerFixedItems,
+      { id: createOerId("fixed"), label: "費目", annualAmount: 0, enabled: true },
+    ];
+    handleChange("oerFixedItems", next);
+  };
+  const addOerEventItem = () => {
+    const next = [
+      ...oerEventItems,
+      {
+        id: createOerId("event"),
+        label: "イベント",
+        amount: 0,
+        intervalYears: 10,
+        startYear: 10,
+        mode: "RESERVE",
+        enabled: true,
+      },
+    ];
+    handleChange("oerEventItems", next);
+  };
+  const removeOerItem = (key: "oerRateItems" | "oerFixedItems" | "oerEventItems", id: string) => {
+    if (key === "oerRateItems") {
+      handleChange(
+        "oerRateItems",
+        oerRateItems.filter((item) => item.id !== id)
+      );
+      return;
+    }
+    if (key === "oerFixedItems") {
+      handleChange(
+        "oerFixedItems",
+        oerFixedItems.filter((item) => item.id !== id)
+      );
+      return;
+    }
+    handleChange(
+      "oerEventItems",
+      oerEventItems.filter((item) => item.id !== id)
+    );
+  };
+
+  const calculateOerPreview = () => {
+    const grossPotentialRent = Math.max(0, annualFullRent);
+    const effectiveIncome =
+      grossPotentialRent * Math.max(0, Math.min(100, formData.occupancyRate || 0)) / 100;
+    const rateExpense = oerRateItems.reduce((sum, item) => {
+      if (!item.enabled) return sum;
+      const base = item.base === "EGI" ? effectiveIncome : grossPotentialRent;
+      return sum + base * (Math.max(0, item.rate) / 100);
+    }, 0);
+    const fixedExpense = oerFixedItems.reduce(
+      (sum, item) => sum + (item.enabled ? Math.max(0, item.annualAmount) : 0),
+      0
+    );
+    const eventExpense = oerEventItems.reduce((sum, item) => {
+      if (!item.enabled) return sum;
+      const interval = Math.max(1, Math.round(item.intervalYears || 0));
+      if (item.mode === "CASH") return sum;
+      return sum + Math.max(0, item.amount) / interval;
+    }, 0);
+    const leasingExpense =
+      oerLeasingEnabledValue && oerLeasingRate > 0
+        ? grossPotentialRent * (oerLeasingRate / 100)
+        : 0;
+    const total = rateExpense + fixedExpense + eventExpense + leasingExpense;
+    const oerGpr = grossPotentialRent > 0 ? (total / grossPotentialRent) * 100 : 0;
+    const oerEgi = effectiveIncome > 0 ? (total / effectiveIncome) * 100 : 0;
+    return { total, oerGpr, oerEgi };
+  };
+
+  const oerPreview = useMemo(
+    () => calculateOerPreview(),
+    [
+      annualFullRent,
+      formData.occupancyRate,
+      oerRateItems,
+      oerFixedItems,
+      oerEventItems,
+      oerLeasingEnabledValue,
+      oerLeasingRate,
+    ]
+  );
+
   const addRepairEvent = () => {
     const nextYear = repairEvents.length > 0 ? repairEvents[repairEvents.length - 1].year + 1 : 10;
     const nextEvent = { year: Math.max(1, Math.min(35, nextYear)), amount: 1000000, label: "" };
@@ -529,43 +1034,64 @@ export const SimulationForm: React.FC<Props> = ({
 
       {isCollapsed ? null : (
         <div className="form-scroll">
-          <div className="form-row">
-            {/* --- 1. 基本情報セクション --- */}
-            <div className="form-panel-stack">
+          <div className="form-input-layout">
+            <div className="form-input-left">
               {listing ? (
-                <div className="import-listing listing-card">
-                  {listingImageSrc && !listingImageError ? (
-                    <img
-                      src={listingImageSrc}
-                      alt="物件写真"
-                      loading="lazy"
-                      onError={() => setListingImageError(true)}
-                    />
-                  ) : (
-                    <div className="listing-placeholder">No Image</div>
-                  )}
-                  <div className="listing-meta">
-                    {listing.propertyType ? (
-                      <span className="listing-chip">{listing.propertyType}</span>
-                    ) : null}
-                    {listing.title ? <div className="listing-title">{listing.title}</div> : null}
-                    {listing.address ? (
-                      <div className="listing-address">{listing.address}</div>
-                    ) : null}
-                    {listingUrl ? (
-                      <a
-                        className="listing-url"
-                        href={listingUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={listingUrl}
-                      >
-                        {listingUrlLabel}
-                      </a>
-                    ) : null}
+                <div className="form-section form-panel listing-panel">
+                  <div className="listing-card listing-card--large">
+                    {listingImageSrc && !listingImageError ? (
+                      <img
+                        src={listingImageSrc}
+                        alt="物件写真"
+                        loading="lazy"
+                        onError={() => setListingImageError(true)}
+                      />
+                    ) : (
+                      <div className="listing-placeholder">No Image</div>
+                    )}
+                    <div className="listing-meta">
+                      <div className="listing-header">
+                        {listing.propertyType ? (
+                          <span className="listing-chip">{listing.propertyType}</span>
+                        ) : null}
+                        {listing.title ? <div className="listing-title">{listing.title}</div> : null}
+                      </div>
+                      {listingFactsLeft.length || listingFactsRight.length ? (
+                        <div className="listing-facts">
+                          <div className="listing-facts-col">
+                            {listingFactsLeft.map((item) => (
+                              <div key={item.label} className="listing-fact">
+                                <span className="listing-fact-label">{item.label}</span>
+                                <span className="listing-fact-value">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="listing-facts-col">
+                            {listingFactsRight.map((item) => (
+                              <div key={item.label} className="listing-fact">
+                                <span className="listing-fact-label">{item.label}</span>
+                                <span className="listing-fact-value">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {listingUrl ? (
+                        <a
+                          className="listing-url"
+                          href={listingUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={listingUrl}
+                        >
+                          {listingUrlLabel}
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               ) : null}
+              {/* --- 1. 基本情報セクション --- */}
               <div className="form-section form-panel">
                 <div className="form-panel-head">
                   <h3 className="form-section-title">基本情報</h3>
@@ -580,7 +1106,7 @@ export const SimulationForm: React.FC<Props> = ({
                 </div>
                 {openPanels.basic ? (
                   <>
-                    <div className="form-grid two-col">
+                    <div className="form-grid two-col oer-top-grid">
                       <div>
                         <label>物件価格 (建物+土地/万円)</label>
                         <input
@@ -606,7 +1132,7 @@ export const SimulationForm: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    <div className="form-grid two-col">
+                    <div className="form-grid two-col oer-top-grid">
                       <div>
                         <label>構造</label>
                         <select
@@ -642,95 +1168,523 @@ export const SimulationForm: React.FC<Props> = ({
                   </>
                 ) : null}
               </div>
+              {/* --- 2. 融資・収支セクション --- */}
+              <div className="form-section form-panel">
+                <div className="form-panel-head">
+                  <h3 className="form-section-title">融資・収支</h3>
+                  <button
+                    type="button"
+                    className="section-toggle"
+                    onClick={() => togglePanel("loan")}
+                    aria-expanded={openPanels.loan}
+                  >
+                    {openPanels.loan ? "▼ 閉じる" : "▶ 開く"}
+                  </button>
+                </div>
+                {openPanels.loan ? (
+                  <>
+                    <div className="form-grid one-col compact">
+                      <div>
+                        {renderLabel("借入金額 (万円)", "loanAmount")}
+                        <input
+                          type="number"
+                          value={displayValue(formData.loanAmount, 10000)}
+                          className={isAutoFilled("loanAmount") ? "auto-input" : undefined}
+                          onChange={(e) =>
+                            handleChange("loanAmount", Number(e.target.value) * 10000)
+                          }
+                        />
+                      </div>
+                      <div>
+                        {renderLabel("金利 (%)", "interestRate")}
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={displayPercent(formData.interestRate)}
+                          className={isAutoFilled("interestRate") ? "auto-input" : undefined}
+                          onChange={(e) => handleChange("interestRate", Number(e.target.value))}
+                        />
+                      </div>
+                      <div>
+                        {renderLabel("期間 (年)", "loanDuration")}
+                        <input
+                          type="number"
+                          value={displayValue(formData.loanDuration)}
+                          className={isAutoFilled("loanDuration") ? "auto-input" : undefined}
+                          onChange={(e) => handleChange("loanDuration", Number(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-divider" />
+                    <div className="form-subtitle">収支</div>
+                    <div className="form-grid one-col compact">
+                      <div>
+                        <label>月額賃料 (満室想定/万円)</label>
+                        <input
+                          type="number"
+                          value={displayValue(formData.monthlyRent, 10000)}
+                          onChange={(e) =>
+                            handleChange("monthlyRent", Number(e.target.value) * 10000)
+                          }
+                        />
+                        {!isPristine && formData.monthlyRent > 0 ? (
+                          <p className="form-note">
+                            年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
+                          </p>
+                        ) : null}
+                      </div>
+                      <div>
+                        {renderLabel("家賃下落率 (2年ごと/%)", "rentDeclineRate")}
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={displayPercent(rentDeclineValue)}
+                          className={isAutoFilled("rentDeclineRate") ? "auto-input" : undefined}
+                          onChange={(e) => handleChange("rentDeclineRate", Number(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
 
-            {/* --- 2. 融資・収支セクション --- */}
-            <div className="form-section form-panel">
+            <div className="form-input-right">
+              <div className="form-input-right-grid">
+                <div className="form-input-right-col">
+            {/* --- 4. 運営経費 (OER) セクション --- */}
+            <div className="form-section form-panel oer-panel">
               <div className="form-panel-head">
-                <h3 className="form-section-title">融資・収支設定</h3>
+                <h3 className="form-section-title">運営経費 (OER)</h3>
                 <button
                   type="button"
                   className="section-toggle"
-                  onClick={() => togglePanel("finance")}
-                  aria-expanded={openPanels.finance}
+                  onClick={() => togglePanel("oer")}
+                  aria-expanded={openPanels.oer}
                 >
-                  {openPanels.finance ? "▼ 閉じる" : "▶ 開く"}
+                  {openPanels.oer ? "▼ 閉じる" : "▶ 開く"}
                 </button>
               </div>
-              {openPanels.finance ? (
+              {openPanels.oer ? (
                 <>
-                  <div className="form-grid">
-                    <div>
-                      {renderLabel("借入金額 (万円)", "loanAmount")}
-                      <input
-                        type="number"
-                        value={displayValue(formData.loanAmount, 10000)}
-                        className={isAutoFilled("loanAmount") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("loanAmount", Number(e.target.value) * 10000)}
-                      />
+                  <div className="oer-box">
+                    <div className="oer-box-head">
+                      <div>
+                        <div className="oer-box-title">入力方式</div>
+                        <p className="form-note">簡易入力か内訳入力を選べます。</p>
+                      </div>
+                      <div className="oer-mode-toggle" role="group" aria-label="運営経費モード">
+                        <button
+                          type="button"
+                          className={oerModeValue === "SIMPLE" ? "is-active" : undefined}
+                          onClick={() => handleOerModeChange("SIMPLE")}
+                        >
+                          簡易
+                        </button>
+                        <button
+                          type="button"
+                          className={oerModeValue === "DETAILED" ? "is-active" : undefined}
+                          onClick={() => handleOerModeChange("DETAILED")}
+                        >
+                          内訳
+                        </button>
+                      </div>
                     </div>
-                    <div>
-                      {renderLabel("金利 (%)", "interestRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(formData.interestRate)}
-                        className={isAutoFilled("interestRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("interestRate", Number(e.target.value))}
-                      />
+
+                    <div className="form-grid oer-top-grid">
+                      <div>
+                        <label>運営経費テンプレ</label>
+                        <select
+                          value={oerPropertyType}
+                          onChange={(e) => {
+                            setOerTypeTouched(true);
+                            setOerPropertyType(e.target.value as OerPropertyType);
+                          }}
+                        >
+                          {OER_PROPERTY_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label>築年数帯</label>
+                        <select
+                          value={oerAgeBand}
+                          onChange={(e) => {
+                            setOerAgeTouched(true);
+                            setOerAgeBand(e.target.value as OerAgeBand);
+                          }}
+                        >
+                          {OER_AGE_BANDS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label>戸数</label>
+                        <input
+                          type="number"
+                          value={displayValue(formData.unitCount)}
+                          onChange={(e) => handleChange("unitCount", Number(e.target.value))}
+                        />
+                      </div>
+                      <div>
+                        <label>清掃回数/月</label>
+                        <select
+                          value={
+                            formData.cleaningVisitsPerMonth > 0
+                              ? String(formData.cleaningVisitsPerMonth)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            handleChange("cleaningVisitsPerMonth", Number(e.target.value))
+                          }
+                        >
+                          <option value="" disabled>
+                            選択
+                          </option>
+                          <option value="2">月2回</option>
+                          <option value="4">月4回</option>
+                        </select>
+                        <p className="form-note">9〜16戸は相場で清掃費を自動入力します。</p>
+                      </div>
                     </div>
-                    <div>
-                      {renderLabel("期間 (年)", "loanDuration")}
-                      <input
-                        type="number"
-                        value={displayValue(formData.loanDuration)}
-                        className={isAutoFilled("loanDuration") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("loanDuration", Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                  <div className="form-grid two-col">
-                    <div>
-                      <label>月額賃料 (満室想定/万円)</label>
-                      <input
-                        type="number"
-                        value={displayValue(formData.monthlyRent, 10000)}
-                        onChange={(e) => handleChange("monthlyRent", Number(e.target.value) * 10000)}
-                      />
-                      {!isPristine && formData.monthlyRent > 0 ? (
+                    <div className="form-grid two-col">
+                      <div>
+                        <div className="oer-actions">
+                          <button
+                            type="button"
+                            className="section-toggle"
+                            onClick={() => applyOerPreset(oerModeValue)}
+                          >
+                            {oerModeValue === "SIMPLE" ? "テンプレ適用" : "内訳を生成"}
+                          </button>
+                          <button
+                            type="button"
+                            className="section-toggle"
+                            onClick={() => setShowOerTemplateTable((prev) => !prev)}
+                          >
+                            {showOerTemplateTable ? "一覧を閉じる" : "テンプレ一覧"}
+                          </button>
+                        </div>
+                      </div>
+                      <div>
                         <p className="form-note">
-                          年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
+                          推定: {oerSuggestedRounded}% (固都税除外{oerTemplate.exclTax}% + 補正)
                         </p>
-                      ) : null}
+                      </div>
                     </div>
-                    <div>
-                      {renderLabel("家賃下落率 (2年ごと/%)", "rentDeclineRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(rentDeclineValue)}
-                        className={isAutoFilled("rentDeclineRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("rentDeclineRate", Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                  <div className="form-grid three-col">
-                    <div>
-                      {renderLabel("運営経費率 (%)", "operatingExpenseRate")}
-                      <input
-                        type="number"
-                        value={displayPercent(formData.operatingExpenseRate)}
-                        className={isAutoFilled("operatingExpenseRate") ? "auto-input" : undefined}
-                        onChange={(e) =>
-                          handleChange("operatingExpenseRate", Number(e.target.value))
-                        }
-                      />
-                    </div>
+                    {oerModeValue === "SIMPLE" ? (
+                      <div className="oer-assumptions">
+                        {oerIncludeAd ? (
+                          <span className="oer-assumption">AD・募集費 +{OER_AD_BONUS}%</span>
+                        ) : null}
+                        <span className="oer-assumption">
+                          小修繕積立 +{OER_REPAIR_BONUS}%
+                        </span>
+                        <span className="oer-assumption">予備費 +{OER_BUFFER_BONUS}%</span>
+                      </div>
+                    ) : null}
+                    {showOerTemplateTable ? (
+                      <div className="oer-template">
+                        <div className="oer-template-title">運営経費率テンプレ（固都税除外）</div>
+                        <table className="oer-template-table">
+                          <thead>
+                            <tr>
+                              <th>物件タイプ</th>
+                              {OER_AGE_BANDS.map((band) => (
+                                <th key={band.value}>{band.label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {OER_PROPERTY_OPTIONS.map((option) => (
+                              <tr key={option.value}>
+                                <td>{option.label}</td>
+                                {OER_AGE_BANDS.map((band) => (
+                                  <td key={`${option.value}-${band.value}`}>
+                                    {OER_TEMPLATES[option.value][band.value].exclTax}%
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+
+                    {oerModeValue === "SIMPLE" ? (
+                      <div className="form-grid three-col compact">
+                        <div>
+                          {renderLabel("運営経費率 (%)", "operatingExpenseRate")}
+                          <input
+                            type="number"
+                            value={displayPercent(formData.operatingExpenseRate)}
+                            className={
+                              isAutoFilled("operatingExpenseRate") ? "auto-input" : undefined
+                            }
+                            onChange={(e) =>
+                              handleChange("operatingExpenseRate", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="oer-summary">
+                          <div>
+                            年間運営経費: {(oerPreview.total / 10000).toLocaleString()} 万円
+                          </div>
+                          <div>OER(満室): {oerPreview.oerGpr.toFixed(1)}%</div>
+                          <div>実効OER: {oerPreview.oerEgi.toFixed(1)}%</div>
+                        </div>
+                        <div className="oer-detail">
+                          <div className="oer-detail-block">
+                            <div className="oer-detail-head">
+                              <span>率で計算</span>
+                              <button
+                                type="button"
+                                className="section-toggle"
+                                onClick={addOerRateItem}
+                              >
+                                追加
+                              </button>
+                            </div>
+                            {oerRateItems.length === 0 ? (
+                              <p className="form-note">内訳が未設定です。</p>
+                            ) : (
+                              oerRateItems.map((item) => (
+                                <div className="oer-item-row rate" key={item.id}>
+                                  <input
+                                    type="text"
+                                    value={item.label}
+                                    onChange={(e) =>
+                                      updateOerRateItem(item.id, { label: e.target.value })
+                                    }
+                                  />
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    value={Number.isFinite(item.rate) ? item.rate : 0}
+                                    onChange={(e) =>
+                                      updateOerRateItem(item.id, {
+                                        rate: Number(e.target.value),
+                                      })
+                                    }
+                                  />
+                                  <select
+                                    value={item.base}
+                                    onChange={(e) =>
+                                      updateOerRateItem(item.id, {
+                                        base: e.target.value as OerRateItem["base"],
+                                      })
+                                    }
+                                  >
+                                    <option value="GPR">満室</option>
+                                    <option value="EGI">稼働後</option>
+                                  </select>
+                                  <label className="inline-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.enabled}
+                                      onChange={(e) =>
+                                        updateOerRateItem(item.id, { enabled: e.target.checked })
+                                      }
+                                    />
+                                    有効
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="section-toggle"
+                                    onClick={() => removeOerItem("oerRateItems", item.id)}
+                                  >
+                                    削除
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          <div className="oer-detail-block">
+                            <div className="oer-detail-head">
+                              <span>固定費 (年額)</span>
+                              <button
+                                type="button"
+                                className="section-toggle"
+                                onClick={addOerFixedItem}
+                              >
+                                追加
+                              </button>
+                            </div>
+                            {oerFixedItems.length === 0 ? (
+                              <p className="form-note">固定費が未設定です。</p>
+                            ) : (
+                              oerFixedItems.map((item) => (
+                                <div className="oer-item-row fixed" key={item.id}>
+                                  <input
+                                    type="text"
+                                    value={item.label}
+                                    onChange={(e) =>
+                                      updateOerFixedItem(item.id, { label: e.target.value })
+                                    }
+                                  />
+                                  <input
+                                    type="number"
+                                    value={
+                                      Number.isFinite(item.annualAmount)
+                                        ? item.annualAmount / 10000
+                                        : 0
+                                    }
+                                    onChange={(e) =>
+                                      updateOerFixedItem(item.id, {
+                                        annualAmount: Number(e.target.value) * 10000,
+                                      })
+                                    }
+                                  />
+                                  <span className="oer-unit">万円/年</span>
+                                  <label className="inline-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.enabled}
+                                      onChange={(e) =>
+                                        updateOerFixedItem(item.id, { enabled: e.target.checked })
+                                      }
+                                    />
+                                    有効
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="section-toggle"
+                                    onClick={() => removeOerItem("oerFixedItems", item.id)}
+                                  >
+                                    削除
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          <div className="oer-detail-block">
+                            <div className="oer-detail-head">
+                              <span>イベント (平準化/ドカン)</span>
+                              <button
+                                type="button"
+                                className="section-toggle"
+                                onClick={addOerEventItem}
+                              >
+                                追加
+                              </button>
+                            </div>
+                            {oerEventItems.length === 0 ? (
+                              <p className="form-note">イベントが未設定です。</p>
+                            ) : (
+                              oerEventItems.map((item) => (
+                                <div className="oer-item-row event" key={item.id}>
+                                  <input
+                                    type="text"
+                                    value={item.label}
+                                    onChange={(e) =>
+                                      updateOerEventItem(item.id, { label: e.target.value })
+                                    }
+                                  />
+                                  <input
+                                    type="number"
+                                    value={Number.isFinite(item.amount) ? item.amount / 10000 : 0}
+                                    onChange={(e) =>
+                                      updateOerEventItem(item.id, {
+                                        amount: Number(e.target.value) * 10000,
+                                      })
+                                    }
+                                  />
+                                  <input
+                                    type="number"
+                                    value={item.intervalYears}
+                                    onChange={(e) =>
+                                      updateOerEventItem(item.id, {
+                                        intervalYears: Number(e.target.value),
+                                      })
+                                    }
+                                  />
+                                  <select
+                                    value={item.mode}
+                                    onChange={(e) =>
+                                      updateOerEventItem(item.id, {
+                                        mode: e.target.value as OerEventItem["mode"],
+                                      })
+                                    }
+                                  >
+                                    <option value="RESERVE">平準化</option>
+                                    <option value="CASH">発生年</option>
+                                  </select>
+                                  <label className="inline-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.enabled}
+                                      onChange={(e) =>
+                                        updateOerEventItem(item.id, { enabled: e.target.checked })
+                                      }
+                                    />
+                                    有効
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="section-toggle"
+                                    onClick={() => removeOerItem("oerEventItems", item.id)}
+                                  >
+                                    削除
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          <div className="oer-detail-block">
+                            <div className="oer-detail-head">
+                              <span>リーシング費 (AD/仲介)</span>
+                            </div>
+                            <div className="form-grid compact oer-leasing-grid">
+                              <div>
+                                <label>費用(月数)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={oerLeasingMonthsValue}
+                                  disabled={!oerLeasingEnabledValue}
+                                  onChange={(e) =>
+                                    handleChange("oerLeasingMonths", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label>平均居住年数</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={oerLeasingTenancyYearsValue}
+                                  disabled={!oerLeasingEnabledValue}
+                                  onChange={(e) =>
+                                    handleChange("oerLeasingTenancyYears", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <p className="form-note">
+                              年換算: {oerLeasingRate.toFixed(1)}%（満室家賃換算）
+                            </p>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </>
               ) : null}
             </div>
-
+                </div>
+                <div className="form-input-right-col">
             <div className="form-section form-panel">
               <div className="form-panel-head">
                 <h3 className="form-section-title">初期費用設定（購入時）</h3>
@@ -745,7 +1699,7 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.initial ? (
                 <>
-                  <div className="form-grid three-col">
+                  <div className="form-grid three-col compact">
                     <div>
                       {renderLabel("水道分担金率 (%)", "waterContributionRate")}
                       <input
@@ -786,7 +1740,7 @@ export const SimulationForm: React.FC<Props> = ({
                       ) : null}
                     </div>
                   </div>
-                  <div className="form-grid three-col">
+                  <div className="form-grid three-col compact">
                     <div>
                       {renderLabel("融資手数料率 (%)", "loanFeeRate")}
                       <input
@@ -820,7 +1774,7 @@ export const SimulationForm: React.FC<Props> = ({
                       {(estimatedTotal / 10000).toLocaleString()} 万円
                     </p>
                   ) : null}
-                  <div className="form-grid two-col">
+                  <div className="form-grid two-col compact">
                     <div>
                       {renderLabel("不動産取得税率 (%)", "acquisitionTaxRate")}
                       <input
@@ -849,10 +1803,58 @@ export const SimulationForm: React.FC<Props> = ({
                       不動産取得税（翌年計上）: {(acquisitionTaxEstimate / 10000).toLocaleString()} 万円
                     </p>
                   ) : null}
+                  <div className="form-divider" />
+                  <div className="form-subtitle">固定資産税・都市計画税パラメータ</div>
+                  <div className="form-grid two-col compact">
+                    <div>
+                      <label>土地評価率 (%)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(landEvaluationRate)}
+                        className={isAutoFilled("landEvaluationRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("landEvaluationRate", Number(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      <label>建物評価率 (%)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(buildingEvaluationRate)}
+                        className={isAutoFilled("buildingEvaluationRate") ? "auto-input" : undefined}
+                        onChange={(e) =>
+                          handleChange("buildingEvaluationRate", Number(e.target.value))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>住宅用地特例 (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={displayPercent(landTaxReductionRate)}
+                        className={isAutoFilled("landTaxReductionRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("landTaxReductionRate", Number(e.target.value))}
+                      />
+                      <p className="form-note">※1/6なら16.67%</p>
+                    </div>
+                    <div>
+                      <label>固定資産税・都市計画税率 (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={displayPercent(propertyTaxRate)}
+                        className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
                 </>
               ) : null}
             </div>
-
+                </div>
+                <div className="form-input-right-col">
             <div className="form-section form-panel">
               <div className="form-panel-head">
                 <h3 className="form-section-title">修繕・空室設定</h3>
@@ -867,7 +1869,7 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.repair ? (
                 <>
-                  <div className="form-grid two-col">
+                  <div className="form-grid two-col compact">
                     <div>
                       <label>空室モデル</label>
                       <select
@@ -891,7 +1893,7 @@ export const SimulationForm: React.FC<Props> = ({
                     </div>
                   </div>
                   {vacancyModel === "CYCLE" ? (
-                    <div className="form-grid two-col">
+                    <div className="form-grid two-col compact">
                       <div>
                         {renderLabel("空室周期 (年)", "vacancyCycleYears")}
                         <input
@@ -915,7 +1917,7 @@ export const SimulationForm: React.FC<Props> = ({
                     </div>
                   ) : null}
                   {vacancyModel === "PROBABILITY" ? (
-                    <div className="form-grid two-col">
+                    <div className="form-grid two-col compact">
                       <div>
                         {renderLabel("年間空室確率 (%)", "vacancyProbability")}
                         <input
@@ -995,24 +1997,8 @@ export const SimulationForm: React.FC<Props> = ({
                       ))
                     )}
                   </div>
-                </>
-              ) : null}
-            </div>
-
-            <div className="form-section form-panel">
-              <div className="form-panel-head">
-                <h3 className="form-section-title">リスクシナリオ比較</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("scenario")}
-                  aria-expanded={openPanels.scenario}
-                >
-                  {openPanels.scenario ? "▼ 閉じる" : "▶ 開く"}
-                </button>
-              </div>
-              {openPanels.scenario ? (
-                <>
+                  <div className="form-divider" />
+                  <div className="form-subtitle">リスクシナリオ比較</div>
                   <div className="inline-toggle form-split-row">
                     <div className="inline-toggle">
                       <input
@@ -1031,7 +2017,7 @@ export const SimulationForm: React.FC<Props> = ({
                   </p>
                   {formData.scenarioEnabled ? (
                     <>
-                      <div className="form-grid three-col">
+                      <div className="form-grid three-col compact">
                         <div>
                           <label>金利上昇年</label>
                           <input
@@ -1071,7 +2057,7 @@ export const SimulationForm: React.FC<Props> = ({
                         </div>
                       </div>
                       {formData.scenarioRentCurveEnabled ? (
-                        <div className="form-grid three-col">
+                        <div className="form-grid three-col compact">
                           <div>
                             <label>初期下落率 (2年ごと/%)</label>
                             <input
@@ -1106,7 +2092,7 @@ export const SimulationForm: React.FC<Props> = ({
                           </div>
                         </div>
                       ) : null}
-                      <div className="form-grid three-col">
+                      <div className="form-grid three-col compact">
                         <div>
                           <label>入居率悪化</label>
                           <div className="inline-toggle">
@@ -1181,279 +2167,235 @@ export const SimulationForm: React.FC<Props> = ({
                         : "▶ 高度な設定を表示 (設備分離・税務など)"}
                     </button>
                   </div>
-
                   {showAdvanced ? (
                     <div className="form-advanced">
-              
-              {/* 設備分離設定 [cite: 666-667] */}
-              <div className="form-advanced-block">
-                <div className="inline-toggle form-split-row">
-                  <label>減価償却の設備分離</label>
-                  <div className="inline-toggle">
-                    <input
-                      type="checkbox"
-                      id="equipmentSplit"
-                      checked={formData.enableEquipmentSplit}
-                      onChange={(e) => handleChange("enableEquipmentSplit", e.target.checked)}
-                    />
-                    <label htmlFor="equipmentSplit" className="inline-label">
-                      有効にする
-                    </label>
-                  </div>
-                </div>
-                <p className="form-note">
-                  建物価格の一部を「設備（耐用年数15年）」として計算し、初期の節税効果を高めます。
-                </p>
-                
-                {formData.enableEquipmentSplit && (
-                  <>
-                    <div className="form-grid two-col">
-                      <div>
-                        <label>設備比率 (%)</label>
-                        <input
-                          type="number"
-                          value={displayPercent(formData.equipmentRatio)}
-                          onChange={(e) => handleChange("equipmentRatio", Number(e.target.value))}
-                        />
+                      {/* 設備分離設定 [cite: 666-667] */}
+                      <div className="form-advanced-block">
+                        <div className="inline-toggle form-split-row">
+                          <label>減価償却の設備分離</label>
+                          <div className="inline-toggle">
+                            <input
+                              type="checkbox"
+                              id="equipmentSplit"
+                              checked={formData.enableEquipmentSplit}
+                              onChange={(e) => handleChange("enableEquipmentSplit", e.target.checked)}
+                            />
+                            <label htmlFor="equipmentSplit" className="inline-label">
+                              有効にする
+                            </label>
+                          </div>
+                        </div>
+                        <p className="form-note">
+                          建物価格の一部を「設備（耐用年数15年）」として計算し、初期の節税効果を高めます。
+                        </p>
+                        {formData.enableEquipmentSplit ? (
+                          <>
+                            <div className="form-grid two-col">
+                              <div>
+                                <label>設備比率 (%)</label>
+                                <input
+                                  type="number"
+                                  value={displayPercent(formData.equipmentRatio)}
+                                  onChange={(e) =>
+                                    handleChange("equipmentRatio", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label>設備耐用年数 (年)</label>
+                                <input
+                                  type="number"
+                                  value={displayValue(equipmentUsefulLifeValue)}
+                                  onChange={(e) =>
+                                    handleChange("equipmentUsefulLife", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div className="form-note">推奨値: RCなら20〜30%、設備は15年目安</div>
+                          </>
+                        ) : null}
                       </div>
-                      <div>
-                        <label>設備耐用年数 (年)</label>
-                        <input
-                          type="number"
-                          value={displayValue(equipmentUsefulLifeValue)}
-                          onChange={(e) =>
-                            handleChange("equipmentUsefulLife", Number(e.target.value))
-                          }
-                        />
+
+                      {/* 税務設定 [cite: 670-671] */}
+                      <div className="form-advanced-block">
+                        <label>税務モード</label>
+                        <div className="form-grid two-col">
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="taxType"
+                              value="INDIVIDUAL"
+                              checked={formData.taxType === "INDIVIDUAL"}
+                              onChange={() => handleChange("taxType", "INDIVIDUAL")}
+                            />
+                            <span>個人 (累進課税)</span>
+                          </label>
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="taxType"
+                              value="CORPORATE"
+                              checked={formData.taxType === "CORPORATE"}
+                              onChange={() => handleChange("taxType", "CORPORATE")}
+                            />
+                            <span>法人 (実効税率+均等割)</span>
+                          </label>
+                        </div>
+                        <div className="form-grid two-col">
+                          <div>
+                            <label>他所得 (給与など/万円)</label>
+                            <input
+                              type="number"
+                              value={displayValue(otherIncomeValue, 10000)}
+                              onChange={(e) =>
+                                handleChange("otherIncome", Number(e.target.value) * 10000)
+                              }
+                            />
+                            <p className="form-note">累進課税 + 住民税10%で計算</p>
+                          </div>
+                          <div>
+                            <label>法人均等割 (万円/年)</label>
+                            <input
+                              type="number"
+                              value={displayValue(corporateMinimumTaxValue, 10000)}
+                              onChange={(e) =>
+                                handleChange("corporateMinimumTax", Number(e.target.value) * 10000)
+                              }
+                            />
+                            <p className="form-note">※法人モードのみ適用</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 出口戦略（売却） */}
+                      <div className="form-advanced-block">
+                        <div className="inline-toggle form-split-row">
+                          <label>出口戦略（売却）</label>
+                          <div className="inline-toggle">
+                            <input
+                              type="checkbox"
+                              id="exitEnabled"
+                              checked={formData.exitEnabled}
+                              onChange={(e) => handleChange("exitEnabled", e.target.checked)}
+                            />
+                            <label htmlFor="exitEnabled" className="inline-label">
+                              有効にする
+                            </label>
+                          </div>
+                        </div>
+                        <p className="form-note">
+                          売却年のNOIをキャップレートで割り戻して価格を算出します。
+                        </p>
+                        {formData.exitEnabled ? (
+                          <>
+                            <div className="form-grid two-col">
+                              <div>
+                                <label>売却年数 (年)</label>
+                                <input
+                                  type="number"
+                                  value={displayValue(exitYearValue)}
+                                  onChange={(e) => handleChange("exitYear", Number(e.target.value))}
+                                />
+                              </div>
+                              <div>
+                                <label>想定キャップレート (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitCapRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitCapRate", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div className="form-grid two-col">
+                              <div>
+                                <label>仲介手数料率 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitBrokerageRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitBrokerageRate", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label>仲介手数料 (定額/万円)</label>
+                                <input
+                                  type="number"
+                                  value={displayValue(exitBrokerageFixedValue, 10000)}
+                                  onChange={(e) =>
+                                    handleChange("exitBrokerageFixed", Number(e.target.value) * 10000)
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div className="form-grid two-col">
+                              <div>
+                                <label>その他売却コスト率 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitOtherCostRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitOtherCostRate", Number(e.target.value))
+                                  }
+                                />
+                                <p className="form-note">修繕・測量・登記などの概算</p>
+                              </div>
+                              <div>
+                                <label>NPV割引率 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitDiscountRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitDiscountRate", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                            </div>
+                            <div className="form-grid two-col">
+                              <div>
+                                <label>短期譲渡税率 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitShortTermTaxRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitShortTermTaxRate", Number(e.target.value))
+                                  }
+                                />
+                              </div>
+                              <div>
+                                <label>長期譲渡税率 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={displayPercent(exitLongTermTaxRateValue)}
+                                  onChange={(e) =>
+                                    handleChange("exitLongTermTaxRate", Number(e.target.value))
+                                  }
+                                />
+                                <p className="form-note">5年超で長期を適用</p>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                     </div>
-                    <div className="form-note">推奨値: RCなら20〜30%、設備は15年目安</div>
-                  </>
-                )}
-              </div>
-
-              {/* 税務設定 [cite: 670-671] */}
-              <div>
-                <label>税務モード</label>
-                <div className="form-grid two-col">
-                  <label className="inline-label">
-                    <input
-                      type="radio"
-                      name="taxType"
-                      value="INDIVIDUAL"
-                      checked={formData.taxType === "INDIVIDUAL"}
-                      onChange={() => handleChange("taxType", "INDIVIDUAL")}
-                    />
-                    <span>個人 (累進課税)</span>
-                  </label>
-                  <label className="inline-label">
-                    <input
-                      type="radio"
-                      name="taxType"
-                      value="CORPORATE"
-                      checked={formData.taxType === "CORPORATE"}
-                      onChange={() => handleChange("taxType", "CORPORATE")}
-                    />
-                    <span>法人 (実効税率+均等割)</span>
-                  </label>
-                </div>
-
-                <div className="form-grid two-col">
-                  <div>
-                    <label>他所得 (給与など/万円)</label>
-                    <input
-                      type="number"
-                      value={displayValue(otherIncomeValue, 10000)}
-                      onChange={(e) => handleChange("otherIncome", Number(e.target.value) * 10000)}
-                    />
-                    <p className="form-note">累進課税 + 住民税10%で計算</p>
-                  </div>
-                  <div>
-                    <label>法人均等割 (万円/年)</label>
-                    <input
-                      type="number"
-                      value={displayValue(corporateMinimumTaxValue, 10000)}
-                      onChange={(e) =>
-                        handleChange("corporateMinimumTax", Number(e.target.value) * 10000)
-                      }
-                    />
-                    <p className="form-note">※法人モードのみ適用</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* 出口戦略（売却） */}
-              <div className="form-advanced-block">
-                <div className="inline-toggle form-split-row">
-                  <label>出口戦略（売却）</label>
-                  <div className="inline-toggle">
-                    <input
-                      type="checkbox"
-                      id="exitEnabled"
-                      checked={formData.exitEnabled}
-                      onChange={(e) => handleChange("exitEnabled", e.target.checked)}
-                    />
-                    <label htmlFor="exitEnabled" className="inline-label">
-                      有効にする
-                    </label>
-                  </div>
-                </div>
-                <p className="form-note">売却年のNOIをキャップレートで割り戻して価格を算出します。</p>
-
-                {formData.exitEnabled ? (
-                  <>
-                    <div className="form-grid two-col">
-                      <div>
-                        <label>売却年数 (年)</label>
-                        <input
-                          type="number"
-                          value={displayValue(exitYearValue)}
-                          onChange={(e) => handleChange("exitYear", Number(e.target.value))}
-                        />
-                      </div>
-                      <div>
-                        <label>想定キャップレート (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitCapRateValue)}
-                          onChange={(e) => handleChange("exitCapRate", Number(e.target.value))}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-grid two-col">
-                      <div>
-                        <label>仲介手数料率 (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitBrokerageRateValue)}
-                          onChange={(e) => handleChange("exitBrokerageRate", Number(e.target.value))}
-                        />
-                      </div>
-                      <div>
-                        <label>仲介手数料 (定額/万円)</label>
-                        <input
-                          type="number"
-                          value={displayValue(exitBrokerageFixedValue, 10000)}
-                          onChange={(e) =>
-                            handleChange("exitBrokerageFixed", Number(e.target.value) * 10000)
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="form-grid two-col">
-                      <div>
-                        <label>その他売却コスト率 (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitOtherCostRateValue)}
-                          onChange={(e) => handleChange("exitOtherCostRate", Number(e.target.value))}
-                        />
-                        <p className="form-note">修繕・測量・登記などの概算</p>
-                      </div>
-                      <div>
-                        <label>NPV割引率 (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitDiscountRateValue)}
-                          onChange={(e) => handleChange("exitDiscountRate", Number(e.target.value))}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-grid two-col">
-                      <div>
-                        <label>短期譲渡税率 (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitShortTermTaxRateValue)}
-                          onChange={(e) => handleChange("exitShortTermTaxRate", Number(e.target.value))}
-                        />
-                      </div>
-                      <div>
-                        <label>長期譲渡税率 (%)</label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(exitLongTermTaxRateValue)}
-                          onChange={(e) => handleChange("exitLongTermTaxRate", Number(e.target.value))}
-                        />
-                        <p className="form-note">5年超で長期を適用</p>
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-
-            </div>
                   ) : null}
                 </>
               ) : null}
             </div>
-
-            <div className="form-section form-panel">
-              <div className="form-panel-head">
-                <h3 className="form-section-title">固定資産税パラメータ</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("tax")}
-                  aria-expanded={openPanels.tax}
-                >
-                  {openPanels.tax ? "▼ 閉じる" : "▶ 開く"}
-                </button>
-              </div>
-              {openPanels.tax ? (
-                <div className="form-grid two-col">
-                  <div>
-                    <label>土地評価率 (%)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={displayPercent(landEvaluationRate)}
-                      className={isAutoFilled("landEvaluationRate") ? "auto-input" : undefined}
-                      onChange={(e) => handleChange("landEvaluationRate", Number(e.target.value))}
-                    />
-                  </div>
-                  <div>
-                    <label>建物評価率 (%)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={displayPercent(buildingEvaluationRate)}
-                      className={isAutoFilled("buildingEvaluationRate") ? "auto-input" : undefined}
-                      onChange={(e) => handleChange("buildingEvaluationRate", Number(e.target.value))}
-                    />
-                  </div>
-                  <div>
-                    <label>住宅用地特例 (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={displayPercent(landTaxReductionRate)}
-                      className={isAutoFilled("landTaxReductionRate") ? "auto-input" : undefined}
-                      onChange={(e) => handleChange("landTaxReductionRate", Number(e.target.value))}
-                    />
-                    <p className="form-note">※1/6なら16.67%</p>
-                  </div>
-                  <div>
-                    <label>固定資産税率 (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={displayPercent(propertyTaxRate)}
-                      className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
-                      onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
-                    />
-                  </div>
                 </div>
-              ) : null}
-            </div>
+              </div>
           </div>
         </div>
+      </div>
       )}
     </div>
   );

@@ -133,8 +133,16 @@ export const SimulationChart: React.FC<Props> = ({
                 <Line
                   type="monotone"
                   dataKey="cashFlowPreTax"
-                  name="年収支"
+                  name="年収支（税引前）"
                   stroke="var(--accent-cool)"
+                  strokeWidth={3}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="cashFlowPostTax"
+                  name="年収支（税引後）"
+                  stroke="#16a34a"
                   strokeWidth={3}
                   dot={false}
                 />

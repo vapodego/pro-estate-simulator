@@ -7,6 +7,7 @@ import {
   useState,
   type Dispatch,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -60,7 +61,7 @@ const DEFAULT_INPUT: PropertyInput = {
   landEvaluationRate: 0,
   buildingEvaluationRate: 0,
   landTaxReductionRate: 0,
-  propertyTaxRate: 0,
+  propertyTaxRate: 1.7,
   structure: "RC",
   buildingAge: 0,
   enableEquipmentSplit: false,
@@ -78,7 +79,16 @@ const DEFAULT_INPUT: PropertyInput = {
   monthlyRent: 0,
   occupancyRate: 0,
   rentDeclineRate: 0,
+  unitCount: 0,
+  cleaningVisitsPerMonth: 0,
   operatingExpenseRate: 0,
+  oerMode: "SIMPLE",
+  oerRateItems: [],
+  oerFixedItems: [],
+  oerEventItems: [],
+  oerLeasingEnabled: true,
+  oerLeasingMonths: 0,
+  oerLeasingTenancyYears: 0,
   repairEvents: [], // 修繕イベント
   vacancyModel: "FIXED",
   vacancyCycleYears: 0,
@@ -119,6 +129,7 @@ const DEFAULT_LEFT_ORDER = [
   "breakdownLoan",
 ];
 const DEFAULT_RIGHT_ORDER = [
+  "kpi",
   "cashflow",
   "exit",
   "deadcross",
@@ -212,6 +223,8 @@ const formatCell = (
 const formatYen = (value: number) => `${Math.round(value).toLocaleString()}円`;
 const formatPercent = (value: number) => `${value.toFixed(2)}%`;
 const formatMultiple = (value: number) => `${value.toFixed(2)}x`;
+const formatRatio = (value: number) => (Number.isFinite(value) ? value.toFixed(2) : "-");
+type KpiRisk = "good" | "warn" | "bad" | "neutral";
 const formatFirebaseError = (error: unknown, fallback: string) => {
   if (error && typeof error === "object" && "code" in error) {
     const { code, message } = error as FirebaseError;
@@ -226,7 +239,6 @@ export default function Home() {
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
   const [hasImportResult, setHasImportResult] = useState(false);
-  const [hasUserAdjusted, setHasUserAdjusted] = useState(false);
   const [hasViewedResults, setHasViewedResults] = useState(false);
   const [hasCompletedSteps, setHasCompletedSteps] = useState(false);
   const [aiMessages, setAiMessages] = useState<{ role: "user" | "assistant"; content: string }[]>(
@@ -235,6 +247,9 @@ export default function Home() {
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPosition, setAiPosition] = useState<{ x: number; y: number } | null>(null);
+  const [aiDragging, setAiDragging] = useState(false);
+  const [aiCollapsed, setAiCollapsed] = useState(false);
   const [selectedYear, setSelectedYear] = useState(1);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -248,12 +263,15 @@ export default function Home() {
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
   const resultsRef = useRef<HTMLElement | null>(null);
+  const aiPanelRef = useRef<HTMLDivElement | null>(null);
+  const aiDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const saveMenuRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
   const [openSections, setOpenSections] = useState({
+    kpi: true,
     cashflow: true,
     simulation: true,
     repayment: true,
@@ -389,7 +407,6 @@ export default function Home() {
     setInputData({ ...DEFAULT_INPUT, ...item.input });
     setAutoFilledKeys([]);
     setSelectedImportId(null);
-    setHasUserAdjusted(false);
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -426,7 +443,6 @@ export default function Home() {
       });
       setSelectedImportId(id);
     }
-    setHasUserAdjusted(true);
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -439,7 +455,6 @@ export default function Home() {
     setInputData(item.input);
     setAutoFilledKeys(item.autoFilled);
     setSelectedImportId(id);
-    setHasUserAdjusted(false);
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -449,7 +464,6 @@ export default function Home() {
   const handleImportClear = () => {
     setImportHistory([]);
     setSelectedImportId(null);
-    setHasUserAdjusted(false);
     setHasViewedResults(false);
     setHasCompletedSteps(false);
   };
@@ -457,7 +471,6 @@ export default function Home() {
   const handleImportResultChange = (hasResult: boolean) => {
     setHasImportResult(hasResult);
     if (!hasResult) {
-      setHasUserAdjusted(false);
       setHasViewedResults(false);
       setHasCompletedSteps(false);
     }
@@ -470,18 +483,16 @@ export default function Home() {
 
   const handleFieldTouch = (key: keyof PropertyInput) => {
     setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
-    setHasUserAdjusted(true);
   };
 
   const currentStep = useMemo(() => {
     if (!hasImportResult) return 1;
-    if (!hasUserAdjusted) return 2;
-    if (!hasViewedResults) return 3;
-    return 4;
-  }, [hasImportResult, hasUserAdjusted, hasViewedResults]);
+    if (!hasViewedResults) return 2;
+    return 3;
+  }, [hasImportResult, hasViewedResults]);
 
   useEffect(() => {
-    if (currentStep === 4) {
+    if (currentStep === 3) {
       setHasCompletedSteps(true);
     }
   }, [currentStep]);
@@ -501,11 +512,61 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!aiDragging) return;
+    const handleMove = (event: PointerEvent) => {
+      if (!aiDragOffsetRef.current) return;
+      const panel = aiPanelRef.current;
+      if (!panel) return;
+      const padding = 12;
+      const offsetX = aiDragOffsetRef.current.x;
+      const offsetY = aiDragOffsetRef.current.y;
+      const panelWidth = panel.offsetWidth;
+      const panelHeight = panel.offsetHeight;
+      const nextX = Math.min(
+        Math.max(padding, event.clientX - offsetX),
+        window.innerWidth - panelWidth - padding
+      );
+      const nextY = Math.min(
+        Math.max(padding, event.clientY - offsetY),
+        window.innerHeight - panelHeight - padding
+      );
+      setAiPosition({ x: nextX, y: nextY });
+    };
+    const handleUp = () => {
+      setAiDragging(false);
+      aiDragOffsetRef.current = null;
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [aiDragging]);
+
+  const handleAiDragStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const panel = aiPanelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    aiDragOffsetRef.current = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    setAiPosition({ x: rect.left, y: rect.top });
+    setAiDragging(true);
+  };
+
   const handleAskAi = async (event: FormEvent) => {
     event.preventDefault();
     if (!aiInput.trim() || aiLoading) return;
-    const nextMessages = [...aiMessages, { role: "user", content: aiInput.trim() }];
-    setAiMessages(nextMessages);
+    const nextMessages: { role: "user" | "assistant"; content: string }[] = [
+      ...aiMessages,
+      { role: "user", content: aiInput.trim() },
+    ];
+    const limitedMessages = nextMessages.slice(-10);
+    setAiMessages(limitedMessages);
     setAiInput("");
     setAiError(null);
     setAiLoading(true);
@@ -513,7 +574,7 @@ export default function Home() {
       const response = await fetch("/api/ai-comment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ summary: aiSummary, messages: nextMessages }),
+        body: JSON.stringify({ summary: aiSummary, messages: limitedMessages }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -521,7 +582,11 @@ export default function Home() {
       }
       const message = typeof payload?.message === "string" ? payload.message : "";
       if (message) {
-        setAiMessages([...nextMessages, { role: "assistant", content: message }]);
+        const updatedMessages: { role: "user" | "assistant"; content: string }[] = [
+          ...limitedMessages,
+          { role: "assistant", content: message },
+        ];
+        setAiMessages(updatedMessages.slice(-10));
       }
     } catch (error) {
       setAiError(error instanceof Error ? error.message : "AIの回答取得に失敗しました。");
@@ -548,6 +613,11 @@ export default function Home() {
     () => (inputData.scenarioEnabled ? calculateSimulation(inputData, scenarioConfig) : null),
     [inputData]
   );
+  const interestStressResults = useMemo(() => {
+    const baseRate = Number.isFinite(inputData.interestRate) ? inputData.interestRate : 0;
+    const nextRate = Math.max(0, baseRate + 1);
+    return calculateSimulation({ ...inputData, interestRate: nextRate });
+  }, [inputData]);
   const visibleResults = results.slice(0, 35);
   const selectedResult = results.find((result) => result.year === selectedYear);
   const loanResults = results.filter((result) => result.year <= inputData.loanDuration);
@@ -569,9 +639,12 @@ export default function Home() {
   const totalPrice = basePrice + totalInitialCosts;
   const landEvaluation = Math.round(landPrice * (inputData.landEvaluationRate / 100));
   const buildingEvaluation = Math.round(buildingPrice * (inputData.buildingEvaluationRate / 100));
+  const propertyTaxBase =
+    landEvaluation * (inputData.landTaxReductionRate / 100) + buildingEvaluation;
+  const fixedAssetTaxEstimate = Math.round(propertyTaxBase * 0.014);
+  const cityPlanningTaxEstimate = Math.round(propertyTaxBase * 0.003);
   const propertyTaxEstimate = Math.round(
-    (landEvaluation * (inputData.landTaxReductionRate / 100) + buildingEvaluation) *
-      (inputData.propertyTaxRate / 100)
+    propertyTaxBase * (inputData.propertyTaxRate / 100)
   );
   const acquisitionTaxEstimate = Math.round(
     (landEvaluation * (inputData.acquisitionLandReductionRate / 100) + buildingEvaluation) *
@@ -655,6 +728,44 @@ export default function Home() {
         ? Math.min(...results.map((result) => result.cashFlowPostTax))
         : 0;
     const deadCrossYears = results.filter((result) => result.isDeadCross).map((result) => result.year);
+    const everyFiveYears = results
+      .filter((result) => result.year === 1 || (result.year % 5 === 0 && result.year <= 30))
+      .map((result) => ({
+        year: result.year,
+        income: result.income,
+        expense: result.expense,
+        propertyTax: result.propertyTax,
+        repairCost: result.repairCost,
+        loanPaymentTotal: result.loanPaymentTotal,
+        loanInterest: result.loanInterest,
+        loanPrincipal: result.loanPrincipal,
+        loanBalance: result.loanBalance,
+        depreciationBody: result.depreciationBody,
+        depreciationEquipment: result.depreciationEquipment,
+        depreciationTotal: result.depreciationTotal,
+        taxableIncome: result.taxableIncome,
+        taxAmount: result.taxAmount,
+        cashFlowPreTax: result.cashFlowPreTax,
+        cashFlowPostTax: result.cashFlowPostTax,
+        acquisitionTax: result.acquisitionTax,
+        isDeadCross: result.isDeadCross,
+      }));
+    const cashflowEveryFiveYears = everyFiveYears.map((result) => ({
+      year: result.year,
+      income: result.income,
+      expense: result.expense,
+      propertyTax: result.propertyTax,
+      repairCost: result.repairCost,
+      loanPaymentTotal: result.loanPaymentTotal,
+      loanInterest: result.loanInterest,
+      loanPrincipal: result.loanPrincipal,
+      taxAmount: result.taxAmount,
+      cashFlowPreTax: result.cashFlowPreTax,
+      cashFlowPostTax: result.cashFlowPostTax,
+      acquisitionTax: result.acquisitionTax,
+      loanBalance: result.loanBalance,
+      isDeadCross: result.isDeadCross,
+    }));
     return {
       input: {
         price: inputData.price,
@@ -673,6 +784,8 @@ export default function Home() {
         minCashFlow,
         deadCrossYears,
       },
+      cashflowEveryFiveYears,
+      simulationEveryFiveYears: everyFiveYears,
       exit: inputData.exitEnabled
         ? {
             exitYear,
@@ -766,26 +879,216 @@ export default function Home() {
   };
   const baseSummary = summarizeScenario(results);
   const stressSummary = stressResults ? summarizeScenario(stressResults) : null;
+  const kpiResult = selectedResult ?? results[0];
+  const kpiYear = kpiResult?.year ?? 1;
+  const kpiStressResult = interestStressResults.find((result) => result.year === kpiYear);
+  const calcNoi = (result?: YearlyResult) =>
+    result
+      ? result.income - result.expense - result.propertyTax - result.repairCost
+      : Number.NaN;
+  const calcOpex = (result?: YearlyResult) =>
+    result ? result.expense + result.propertyTax + result.repairCost : Number.NaN;
+  const kpiNoi = calcNoi(kpiResult);
+  const kpiOpex = calcOpex(kpiResult);
+  const kpiGpi = kpiResult?.grossPotentialRent ?? Number.NaN;
+  const kpiAds = kpiResult?.loanPaymentTotal ?? Number.NaN;
+  const kpiDscr = kpiAds > 0 ? kpiNoi / kpiAds : Number.NaN;
+  const kpiDscrStress =
+    kpiStressResult && kpiStressResult.loanPaymentTotal > 0
+      ? calcNoi(kpiStressResult) / kpiStressResult.loanPaymentTotal
+      : Number.NaN;
+  const kpiRepaymentRatio = kpiGpi > 0 ? (kpiAds / kpiGpi) * 100 : Number.NaN;
+  const kpiBer = kpiGpi > 0 ? ((kpiOpex + kpiAds) / kpiGpi) * 100 : Number.NaN;
+  const kpiNoiYield = totalPrice > 0 ? (kpiNoi / totalPrice) * 100 : Number.NaN;
+  const kpiYieldGap = Number.isFinite(kpiNoiYield)
+    ? kpiNoiYield - inputData.interestRate
+    : Number.NaN;
+  const kpiCcrPreTax = equity > 0 ? (kpiResult.cashFlowPreTax / equity) * 100 : Number.NaN;
+  const kpiCcrPostTax = equity > 0 ? (kpiResult.cashFlowPostTax / equity) * 100 : Number.NaN;
+  const kpiAtcf = kpiResult.cashFlowPostTax;
+  const kpiDeadCrossLabel = firstDeadCrossYear ? `${firstDeadCrossYear}年目` : "なし";
+  const getRiskByThreshold = (
+    value: number,
+    goodThreshold: number,
+    warnThreshold: number,
+    inverse = false
+  ): KpiRisk => {
+    if (!Number.isFinite(value)) return "neutral";
+    if (!inverse) {
+      if (value >= goodThreshold) return "good";
+      if (value >= warnThreshold) return "warn";
+      return "bad";
+    }
+    if (value <= goodThreshold) return "good";
+    if (value <= warnThreshold) return "warn";
+    return "bad";
+  };
+  const getRiskByZero = (value: number): KpiRisk => {
+    if (!Number.isFinite(value)) return "neutral";
+    return value >= 0 ? "good" : "bad";
+  };
+  const kpiItems: {
+    label: string;
+    value: number | string;
+    format: "yen" | "percent" | "ratio" | "text";
+    note?: string;
+    risk: KpiRisk;
+  }[] = [
+    {
+      label: "DSCR",
+      value: kpiDscr,
+      format: "ratio",
+      note: "目安: 1.20+",
+      risk: getRiskByThreshold(kpiDscr, 1.3, 1.2),
+    },
+    {
+      label: "DSCR（+1%）",
+      value: kpiDscrStress,
+      format: "ratio",
+      note: "金利+1%",
+      risk: getRiskByThreshold(kpiDscrStress, 1.2, 1.0),
+    },
+    {
+      label: "返済比率",
+      value: kpiRepaymentRatio,
+      format: "percent",
+      note: "目安: 50%以下",
+      risk: getRiskByThreshold(kpiRepaymentRatio, 45, 55, true),
+    },
+    {
+      label: "損益分岐点入居率",
+      value: kpiBer,
+      format: "percent",
+      note: "目安: 80%以下",
+      risk: getRiskByThreshold(kpiBer, 80, 85, true),
+    },
+    {
+      label: "実質利回り（NOI）",
+      value: kpiNoiYield,
+      format: "percent",
+      risk: getRiskByThreshold(kpiNoiYield, 5, 3.5),
+    },
+    {
+      label: "イールドギャップ",
+      value: kpiYieldGap,
+      format: "percent",
+      note: "目安: +1.5%",
+      risk: getRiskByThreshold(kpiYieldGap, 2, 1),
+    },
+    {
+      label: "CCR（税引前）",
+      value: kpiCcrPreTax,
+      format: "percent",
+      risk: getRiskByThreshold(kpiCcrPreTax, 10, 5),
+    },
+    {
+      label: "CCR（税引後）",
+      value: kpiCcrPostTax,
+      format: "percent",
+      risk: getRiskByThreshold(kpiCcrPostTax, 8, 4),
+    },
+    {
+      label: "税引後CF（ATCF）",
+      value: kpiAtcf,
+      format: "yen",
+      risk: getRiskByZero(kpiAtcf),
+    },
+    {
+      label: "デッドクロス",
+      value: kpiDeadCrossLabel,
+      format: "text",
+      risk: firstDeadCrossYear ? "warn" : "good",
+    },
+  ];
+  const riskScoreMap: Record<KpiRisk, number> = {
+    good: 100,
+    warn: 60,
+    bad: 20,
+    neutral: 50,
+  };
+  const scoreCandidates: KpiRisk[] = [
+    kpiItems[0].risk,
+    kpiItems[1].risk,
+    kpiItems[2].risk,
+    kpiItems[3].risk,
+    kpiItems[5].risk,
+    kpiItems[7].risk,
+    kpiItems[8].risk,
+    kpiItems[9].risk,
+  ];
+  const safetyScore =
+    scoreCandidates.length > 0
+      ? Math.round(
+          scoreCandidates.reduce((sum, risk) => sum + riskScoreMap[risk], 0) /
+            scoreCandidates.length
+        )
+      : 0;
+  const safetyTone: KpiRisk =
+    safetyScore >= 80 ? "good" : safetyScore >= 60 ? "warn" : "bad";
+  const renderKpiValue = (item: (typeof kpiItems)[number]) => {
+    if (item.format === "text") {
+      return item.value as string;
+    }
+    if (!Number.isFinite(item.value as number)) {
+      return "-";
+    }
+    const numeric = item.value as number;
+    if (item.format === "yen") return formatYen(numeric);
+    if (item.format === "ratio") return formatRatio(numeric);
+    return formatPercent(numeric);
+  };
+  const isCorporateTax = inputData.taxType === "CORPORATE";
+  const corporateMinimumTax = Math.max(0, inputData.corporateMinimumTax || 0);
+  const getCorporateTax = (result: YearlyResult) =>
+    Math.max(0, result.taxAmount - corporateMinimumTax);
+  const taxRows: TableRow[] = isCorporateTax
+    ? [
+        {
+          label: "法人税(15/23%)",
+          value: (r: YearlyResult) => getCorporateTax(r),
+          outflow: true,
+          tone: "negative",
+        },
+        {
+          label: "法人均等割",
+          value: () => corporateMinimumTax,
+          outflow: true,
+          tone: "negative",
+        },
+      ]
+    : [
+        {
+          label: "所得税概算",
+          value: (r: YearlyResult) => r.taxAmount,
+          outflow: true,
+          tone: "negative",
+        },
+      ];
 
   const tableSections: TableSection[] = [
     {
       title: "収入・支出",
       rows: [
-        { label: "家賃収入", value: (r) => r.income },
-        { label: "減価償却費", value: (r) => r.depreciationTotal },
-        { label: "固定資産税", value: (r) => r.propertyTax, outflow: true, tone: "negative" },
-        { label: "修繕費", value: (r) => r.repairCost, outflow: true, tone: "negative" },
-        { label: "管理費等経費", value: (r) => r.expense, outflow: true, tone: "negative" },
-        { label: "返済利息", value: (r) => r.loanInterest, outflow: true, tone: "subtle" },
+        { label: "家賃収入", value: (r: YearlyResult) => r.income },
+        { label: "減価償却費", value: (r: YearlyResult) => r.depreciationTotal },
+        {
+          label: "固定資産税・都市計画税",
+          value: (r: YearlyResult) => r.propertyTax,
+          outflow: true,
+          tone: "negative",
+        },
+        { label: "修繕費", value: (r: YearlyResult) => r.repairCost, outflow: true, tone: "negative" },
+        { label: "管理費等経費", value: (r: YearlyResult) => r.expense, outflow: true, tone: "negative" },
+        { label: "返済利息", value: (r: YearlyResult) => r.loanInterest, outflow: true, tone: "subtle" },
         {
           label: "経費計",
-          value: (r) =>
+          value: (r: YearlyResult) =>
             r.depreciationTotal + r.propertyTax + r.repairCost + r.expense + r.loanInterest,
           outflow: true,
           tone: "highlight",
         },
-        { label: "所得概算", value: (r) => r.taxableIncome, tone: "highlight" },
-        { label: "所得税概算", value: (r) => r.taxAmount, outflow: true, tone: "negative" },
+        { label: "所得概算", value: (r: YearlyResult) => r.taxableIncome, tone: "highlight" },
+        ...taxRows,
       ],
     },
     {
@@ -951,7 +1254,7 @@ export default function Home() {
     breakdownTax: (
       <div className="sheet-card breakdown-card">
         <div className="breakdown-head">
-          <h3 className="breakdown-title">固定資産税計算用</h3>
+          <h3 className="breakdown-title">固定資産税・都市計画税計算用</h3>
           <div className="header-actions">
             <span className="breakdown-pill">概算値</span>
             <button
@@ -977,8 +1280,16 @@ export default function Home() {
                   <td className="value calc">{formatYen(buildingEvaluation)}</td>
                 </tr>
                 <tr>
-                  <td className="label">固定資産税概算額</td>
+                  <td className="label">固定資産税・都市計画税概算額</td>
                   <td className="value calc total">{formatYen(propertyTaxEstimate)}</td>
+                </tr>
+                <tr>
+                  <td className="label">固定資産税 (1.4%)</td>
+                  <td className="value calc">{formatYen(fixedAssetTaxEstimate)}</td>
+                </tr>
+                <tr>
+                  <td className="label">都市計画税 (0.3%)</td>
+                  <td className="value calc">{formatYen(cityPlanningTaxEstimate)}</td>
                 </tr>
               </tbody>
             </table>
@@ -1097,6 +1408,49 @@ export default function Home() {
   };
 
   const rightPanels: Record<string, ReactNode> = {
+    kpi: (
+      <div className="sheet-card kpi-card">
+        <div className="table-head">
+          <h2 className="table-title">投資KPIダッシュボード</h2>
+          <div className="table-actions">
+            <div className="table-controls">
+              <span className={`kpi-score kpi-score-${safetyTone}`}>
+                安全スコア {safetyScore}
+              </span>
+              <label className="kpi-select">
+                <span>対象年</span>
+                <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
+                  {results.map((result) => (
+                    <option key={`kpi-year-${result.year}`} value={result.year}>
+                      {result.year}年目
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button
+              type="button"
+              className="section-toggle"
+              onClick={() => toggleSection("kpi")}
+              aria-expanded={openSections.kpi}
+            >
+              {openSections.kpi ? "▼ 閉じる" : "▶ 開く"}
+            </button>
+          </div>
+        </div>
+        {openSections.kpi ? (
+          <div className="kpi-grid">
+            {kpiItems.map((item) => (
+              <div key={item.label} className={`kpi-item kpi-risk-${item.risk}`}>
+                <span className="kpi-label">{item.label}</span>
+                <span className={`kpi-value kpi-value-${item.risk}`}>{renderKpiValue(item)}</span>
+                {item.note ? <span className="kpi-note">{item.note}</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ),
     cashflow: (
       <div className="sheet-card table-card">
         <div className="table-head">
@@ -1158,7 +1512,7 @@ export default function Home() {
                     ))}
                   </tr>
                   <tr>
-                    <td className="row-title">固定資産税</td>
+                    <td className="row-title">固定資産税・都市計画税</td>
                     {visibleResults.map((result) => (
                       <td key={`cf-tax-${result.year}`} className="cell">
                         {formatCell(result.propertyTax, true)}
@@ -1189,14 +1543,35 @@ export default function Home() {
                       </td>
                     ))}
                   </tr>
-                  <tr>
-                    <td className="row-title">所得税</td>
-                    {visibleResults.map((result) => (
-                      <td key={`cf-income-tax-${result.year}`} className="cell">
-                        {formatCell(result.taxAmount, true)}
-                      </td>
-                    ))}
-                  </tr>
+                  {isCorporateTax ? (
+                    <>
+                      <tr>
+                        <td className="row-title">法人税(15/23%)</td>
+                        {visibleResults.map((result) => (
+                          <td key={`cf-corp-tax-${result.year}`} className="cell">
+                            {formatCell(getCorporateTax(result), true)}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="row-title">法人均等割</td>
+                        {visibleResults.map((result) => (
+                          <td key={`cf-corp-min-${result.year}`} className="cell">
+                            {formatCell(corporateMinimumTax, true)}
+                          </td>
+                        ))}
+                      </tr>
+                    </>
+                  ) : (
+                    <tr>
+                      <td className="row-title">所得税</td>
+                      {visibleResults.map((result) => (
+                        <td key={`cf-income-tax-${result.year}`} className="cell">
+                          {formatCell(result.taxAmount, true)}
+                        </td>
+                      ))}
+                    </tr>
+                  )}
                   {inputData.exitEnabled ? (
                     <tr>
                       <td className="row-title">売却手残り</td>
@@ -1694,7 +2069,7 @@ export default function Home() {
                     </span>
                   </div>
                   <div className="detail-item">
-                    <span className="detail-label">固定資産税</span>
+                    <span className="detail-label">固定資産税・都市計画税</span>
                     <span className="detail-value">{formatYen(selectedResult.propertyTax)}</span>
                   </div>
                   <div className="detail-item">
@@ -1713,10 +2088,27 @@ export default function Home() {
                       {formatYen(selectedResult.depreciationTotal)}
                     </span>
                   </div>
-                  <div className="detail-item">
-                    <span className="detail-label">税額</span>
-                    <span className="detail-value">{formatYen(selectedResult.taxAmount)}</span>
-                  </div>
+                  {isCorporateTax ? (
+                    <>
+                      <div className="detail-item">
+                        <span className="detail-label">法人税</span>
+                        <span className="detail-value">
+                          {formatYen(getCorporateTax(selectedResult))}
+                        </span>
+                      </div>
+                      <div className="detail-item">
+                        <span className="detail-label">法人均等割</span>
+                        <span className="detail-value">
+                          {formatYen(corporateMinimumTax)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="detail-item">
+                      <span className="detail-label">税額</span>
+                      <span className="detail-value">{formatYen(selectedResult.taxAmount)}</span>
+                    </div>
+                  )}
                   <div className="detail-item">
                     <span className="detail-label">税引後CF</span>
                     <span className="detail-value">{formatYen(selectedResult.cashFlowPostTax)}</span>
@@ -1903,14 +2295,13 @@ export default function Home() {
       <div className="step-bar">
         {[
           { id: 1, label: "URL入力" },
-          { id: 2, label: "抽出確認" },
-          { id: 3, label: "入力調整" },
-          { id: 4, label: "結果を見る" },
+          { id: 2, label: "入力調整" },
+          { id: 3, label: "結果を見る" },
         ].map((step) => (
           <div
             key={step.id}
             className={`step-item${currentStep === step.id ? " active" : ""}${
-              currentStep === step.id && (step.id === 4 || hasCompletedSteps) ? " no-pulse" : ""
+              currentStep === step.id && (step.id === 3 || hasCompletedSteps) ? " no-pulse" : ""
             }`}
           >
             <span className="step-index">Step {step.id}</span>
@@ -1925,7 +2316,7 @@ export default function Home() {
       </div>
       <div
         className={`top-import step-zone${
-          !hasCompletedSteps && (currentStep === 1 || currentStep === 2) ? " active" : ""
+          !hasCompletedSteps && currentStep === 1 ? " active" : ""
         }`}
       >
         <RakumachiImporter
@@ -1935,35 +2326,34 @@ export default function Home() {
           selectedHistoryId={selectedImportId}
           onSelectHistory={handleImportSelect}
           onClearHistory={handleImportClear}
-          highlightStep2={currentStep === 2}
           onResultChange={handleImportResultChange}
         />
       </div>
 
       <div
         className={`input-section step-zone${
-          !hasCompletedSteps && currentStep === 3 ? " active" : ""
+          !hasCompletedSteps && currentStep === 2 ? " active" : ""
         }`}
       >
         <div className="input-section-head">
-          <span className="step-pill">Step 3</span>
+          <span className="step-pill">Step 2</span>
           <span className="input-section-badge">ユーザー入力</span>
         </div>
         <div className="sheet-top">
-          <SimulationForm
-            key={formVersion}
-            initialData={inputData}
-            onCalculate={(data) => setInputData(data)}
-            autoFilledKeys={autoFilledKeys}
-            onFieldTouch={handleFieldTouch}
-            listing={selectedImport?.listing ?? null}
-            listingUrl={selectedImport?.url ?? null}
-          />
+            <SimulationForm
+              key={formVersion}
+              initialData={inputData}
+              onCalculate={(data) => setInputData(data)}
+              autoFilledKeys={autoFilledKeys}
+              onFieldTouch={handleFieldTouch}
+              listing={selectedImport?.listing ?? null}
+              listingUrl={selectedImport?.url ?? null}
+            />
         </div>
       </div>
 
       <div className="input-section-head output-section-head">
-        <span className="step-pill">Step 4</span>
+        <span className="step-pill">Step 3</span>
         <span className="input-section-badge">シミュレーション結果</span>
       </div>
       <section className="sheet" ref={resultsRef}>
@@ -2002,39 +2392,67 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="ai-float-panel" role="dialog" aria-label="AIチャット">
-        <div className="ai-head">
+      <div
+        ref={aiPanelRef}
+        className={`ai-float-panel${aiPosition ? " is-dragged" : ""}${
+          aiDragging ? " is-dragging" : ""
+        }`}
+        role="dialog"
+        aria-label="AIチャット"
+        style={aiPosition ? { left: aiPosition.x, top: aiPosition.y } : undefined}
+      >
+        <div
+          className="ai-head ai-drag-handle"
+          onPointerDown={handleAiDragStart}
+          role="button"
+          aria-label="ドラッグして移動"
+          aria-grabbed={aiDragging}
+        >
           <h3 className="table-title">AIチャット</h3>
-          {aiLoading ? <span className="ai-status">生成中...</span> : null}
-        </div>
-        <div className="ai-messages">
-          {aiMessages.length === 0 && !aiLoading ? (
-            <div className="form-note">
-              質問を入力してください。Step4到達後の結果を含めて回答します。
-            </div>
-          ) : null}
-          {aiMessages.map((message, index) => (
-            <div
-              key={`${message.role}-${index}`}
-              className={`ai-message ${message.role}`}
+          <div className="ai-head-actions">
+            {aiLoading ? <span className="ai-status">生成中...</span> : null}
+            <button
+              type="button"
+              className="section-toggle"
+              onClick={() => setAiCollapsed((prev) => !prev)}
+              aria-expanded={!aiCollapsed}
             >
-              {message.content}
-            </div>
-          ))}
+              {aiCollapsed ? "▶ 開く" : "▼ 閉じる"}
+            </button>
+          </div>
         </div>
-        {aiError ? <div className="auth-error">{aiError}</div> : null}
-        <form className="ai-input-row" onSubmit={handleAskAi}>
-          <input
-            type="text"
-            placeholder="AIに質問する"
-            value={aiInput}
-            onChange={(e) => setAiInput(e.target.value)}
-            disabled={aiLoading}
-          />
-          <button type="submit" className="section-toggle" disabled={aiLoading}>
-            送信
-          </button>
-        </form>
+        {!aiCollapsed ? (
+          <>
+            <div className="ai-messages">
+              {aiMessages.length === 0 && !aiLoading ? (
+                <div className="form-note">
+                  質問を入力してください。Step4到達後の結果を含めて回答します。
+                </div>
+              ) : null}
+              {aiMessages.map((message, index) => (
+                <div
+                  key={`${message.role}-${index}`}
+                  className={`ai-message ${message.role}`}
+                >
+                  {message.content}
+                </div>
+              ))}
+            </div>
+            {aiError ? <div className="auth-error">{aiError}</div> : null}
+            <form className="ai-input-row" onSubmit={handleAskAi}>
+              <input
+                type="text"
+                placeholder="AIに質問する"
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                disabled={aiLoading}
+              />
+              <button type="submit" className="section-toggle" disabled={aiLoading}>
+                送信
+              </button>
+            </form>
+          </>
+        ) : null}
       </div>
     </main>
   );

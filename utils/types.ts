@@ -18,6 +18,35 @@ export interface RepairEvent {
   label?: string;
 }
 
+export type OerBaseType = 'GPR' | 'EGI';
+export type OerMode = 'SIMPLE' | 'DETAILED';
+export type OerEventMode = 'RESERVE' | 'CASH';
+
+export interface OerRateItem {
+  id: string;
+  label: string;
+  rate: number;
+  base: OerBaseType;
+  enabled: boolean;
+}
+
+export interface OerFixedItem {
+  id: string;
+  label: string;
+  annualAmount: number;
+  enabled: boolean;
+}
+
+export interface OerEventItem {
+  id: string;
+  label: string;
+  amount: number;
+  intervalYears: number;
+  startYear: number;
+  mode: OerEventMode;
+  enabled: boolean;
+}
+
 // 入力データの型定義
 export interface PropertyInput {
   price: number;              // 物件価格（本体: 建物+土地）
@@ -52,7 +81,16 @@ export interface PropertyInput {
   monthlyRent: number;        // 家賃収入（月額）
   occupancyRate: number;      // 入居率（%）
   rentDeclineRate: number;    // 家賃下落率（2年ごと/%）
+  unitCount: number;          // 戸数（清掃・管理の目安）
+  cleaningVisitsPerMonth: number; // 清掃回数（月）
   operatingExpenseRate: number; // 運営経費率（%）
+  oerMode: OerMode;           // 運営経費の計算モード
+  oerRateItems: OerRateItem[]; // 運営経費(率)
+  oerFixedItems: OerFixedItem[]; // 運営経費(固定)
+  oerEventItems: OerEventItem[]; // 運営経費(イベント)
+  oerLeasingEnabled: boolean; // リーシング費を含める
+  oerLeasingMonths: number;   // リーシング費(月数)
+  oerLeasingTenancyYears: number; // 平均居住年数
 
   // 修繕・空室モデル
   repairEvents: RepairEvent[]; // 修繕イベント（年・金額）
@@ -108,6 +146,7 @@ export interface ScenarioConfig {
 // 年ごとのシミュレーション結果型
 export interface YearlyResult {
   year: number;               // 年数（1年目〜）
+  grossPotentialRent: number; // 満室想定家賃（GPI）
   income: number;             // 家賃収入（空室考慮後）
   expense: number;            // 運営経費
   propertyTax: number;        // 固定資産税（概算）

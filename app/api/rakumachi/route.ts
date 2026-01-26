@@ -14,6 +14,18 @@ type ListingPreview = {
   title: string | null;
   propertyType: string | null;
   address: string | null;
+  access: string | null;
+  structure: string | null;
+  builtYearMonth: string | null;
+  landRight: string | null;
+  transactionType: string | null;
+  priceYen: number | null;
+  yieldPercent: number | null;
+  annualRentYen: number | null;
+  monthlyRentYen: number | null;
+  buildingAgeYears: number | null;
+  floorAreaSqm: number | null;
+  landAreaSqm: number | null;
   imageUrl: string | null;
 };
 
@@ -99,6 +111,14 @@ const extractJson = (text: string) => {
   return text.slice(start, end + 1);
 };
 
+const STRUCTURE_LABELS: Record<string, string> = {
+  RC: "RC造",
+  SRC: "SRC造",
+  S_HEAVY: "重量鉄骨",
+  S_LIGHT: "軽量鉄骨",
+  WOOD: "木造",
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -164,7 +184,11 @@ export async function POST(request: Request) {
     "landAreaSqm": { "value": number|null, "source": "...", "note": string? },
     "propertyName": { "value": string|null, "source": "...", "note": string? },
     "propertyType": { "value": string|null, "source": "...", "note": string? },
-    "address": { "value": string|null, "source": "...", "note": string? }
+    "address": { "value": string|null, "source": "...", "note": string? },
+    "access": { "value": string|null, "source": "...", "note": string? },
+    "builtYearMonth": { "value": string|null, "source": "...", "note": string? },
+    "landRight": { "value": string|null, "source": "...", "note": string? },
+    "transactionType": { "value": string|null, "source": "...", "note": string? }
   }
 }
 
@@ -178,6 +202,8 @@ export async function POST(request: Request) {
 - 構造のマッピング:
   RC=鉄筋コンクリート, SRC=鉄骨鉄筋コンクリート,
   S_HEAVY=重量鉄骨(厚), S_LIGHT=軽量鉄骨(薄), WOOD=木造
+- 築年月は「YYYY年MM月」などの表記をそのまま入れる
+- 交通（最寄り駅・徒歩分数）は1行で簡潔にまとめる
 
 【本文】
 ${text}
@@ -232,6 +258,18 @@ ${text}
     const addressValue = parsed.fields?.address?.value;
     const propertyNameValue = parsed.fields?.propertyName?.value;
     const propertyTypeValue = parsed.fields?.propertyType?.value;
+    const accessValue = parsed.fields?.access?.value;
+    const builtYearMonthValue = parsed.fields?.builtYearMonth?.value;
+    const landRightValue = parsed.fields?.landRight?.value;
+    const transactionTypeValue = parsed.fields?.transactionType?.value;
+    const structureValue = parsed.fields?.structure?.value;
+    const priceValue = parsed.fields?.priceYen?.value;
+    const yieldValue = parsed.fields?.yieldPercent?.value;
+    const annualRentValue = parsed.fields?.annualRentYen?.value;
+    const monthlyRentValue = parsed.fields?.monthlyRentYen?.value;
+    const buildingAgeValue = parsed.fields?.buildingAgeYears?.value;
+    const floorAreaValue = parsed.fields?.floorAreaSqm?.value;
+    const landAreaValue = parsed.fields?.landAreaSqm?.value;
     const listing: ListingPreview = {
       title:
         typeof propertyNameValue === "string"
@@ -239,6 +277,21 @@ ${text}
           : listingTitle ?? null,
       propertyType: typeof propertyTypeValue === "string" ? propertyTypeValue : null,
       address: typeof addressValue === "string" ? addressValue : null,
+      access: typeof accessValue === "string" ? accessValue : null,
+      structure:
+        typeof structureValue === "string"
+          ? STRUCTURE_LABELS[structureValue] ?? structureValue
+          : null,
+      builtYearMonth: typeof builtYearMonthValue === "string" ? builtYearMonthValue : null,
+      landRight: typeof landRightValue === "string" ? landRightValue : null,
+      transactionType: typeof transactionTypeValue === "string" ? transactionTypeValue : null,
+      priceYen: typeof priceValue === "number" ? priceValue : null,
+      yieldPercent: typeof yieldValue === "number" ? yieldValue : null,
+      annualRentYen: typeof annualRentValue === "number" ? annualRentValue : null,
+      monthlyRentYen: typeof monthlyRentValue === "number" ? monthlyRentValue : null,
+      buildingAgeYears: typeof buildingAgeValue === "number" ? buildingAgeValue : null,
+      floorAreaSqm: typeof floorAreaValue === "number" ? floorAreaValue : null,
+      landAreaSqm: typeof landAreaValue === "number" ? landAreaValue : null,
       imageUrl: listingImageUrl,
     };
     return NextResponse.json({ fields: parsed.fields ?? {}, listing });

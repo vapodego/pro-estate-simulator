@@ -1,4 +1,13 @@
-import { PropertyInput, YearlyResult, ScenarioConfig, LEGAL_USEFUL_LIFE, StructureType } from './types';
+import {
+  PropertyInput,
+  YearlyResult,
+  ScenarioConfig,
+  LEGAL_USEFUL_LIFE,
+  StructureType,
+  OerRateItem,
+  OerFixedItem,
+  OerEventItem,
+} from './types';
 
 // 中古耐用年数の計算（簡便法） 
 export const calculateUsefulLife = (structure: StructureType, age: number): number => {
@@ -23,7 +32,8 @@ const calculatePropertyTax = (
   const safeLandRate = Number.isFinite(landEvaluationRate) ? landEvaluationRate : 70;
   const safeBuildingRate = Number.isFinite(buildingEvaluationRate) ? buildingEvaluationRate : 50;
   const safeLandReduction = Number.isFinite(landTaxReductionRate) ? landTaxReductionRate : 16.67;
-  const safeTaxRate = Number.isFinite(propertyTaxRate) ? propertyTaxRate : 1.4;
+  const safeTaxRate =
+    Number.isFinite(propertyTaxRate) && propertyTaxRate > 0 ? propertyTaxRate : 1.7;
   const buildingPrice = safePrice * (safeRatio / 100);
   const landPrice = Math.max(0, safePrice - buildingPrice);
   const landEvaluation = landPrice * (safeLandRate / 100);
@@ -57,6 +67,51 @@ const calculateProgressiveTax = (taxableIncome: number): number => {
   const incomeTax = taxableIncome * bracket.rate - bracket.deduction;
   const residentTax = taxableIncome * 0.1;
   return Math.max(0, Math.round(incomeTax + residentTax));
+};
+
+const calculateOerDetailed = (
+  year: number,
+  grossPotentialRent: number,
+  effectiveIncome: number,
+  rateItems: OerRateItem[],
+  fixedItems: OerFixedItem[],
+  eventItems: OerEventItem[],
+  leasingEnabled: boolean,
+  leasingMonths: number,
+  leasingTenancyYears: number
+): number => {
+  const safeNumber = (value: number, fallback: number) =>
+    Number.isFinite(value) ? value : fallback;
+  const rateExpense = rateItems.reduce((sum, item) => {
+    if (!item?.enabled) return sum;
+    const rate = Math.max(0, safeNumber(item.rate, 0));
+    const base = item.base === "EGI" ? effectiveIncome : grossPotentialRent;
+    return sum + base * (rate / 100);
+  }, 0);
+  const fixedExpense = fixedItems.reduce((sum, item) => {
+    if (!item?.enabled) return sum;
+    const amount = Math.max(0, safeNumber(item.annualAmount, 0));
+    return sum + amount;
+  }, 0);
+  const eventExpense = eventItems.reduce((sum, item) => {
+    if (!item?.enabled) return sum;
+    const amount = Math.max(0, safeNumber(item.amount, 0));
+    const interval = Math.max(1, Math.round(safeNumber(item.intervalYears, 0)));
+    const startYear = Math.max(1, Math.round(safeNumber(item.startYear, 1)));
+    if (item.mode === "CASH") {
+      if (year >= startYear && (year - startYear) % interval === 0) {
+        return sum + amount;
+      }
+      return sum;
+    }
+    return sum + amount / interval;
+  }, 0);
+  const leasingRate =
+    leasingEnabled && leasingMonths > 0 && leasingTenancyYears > 0
+      ? (leasingMonths / (leasingTenancyYears * 12)) * 100
+      : 0;
+  const leasingExpense = grossPotentialRent * (leasingRate / 100);
+  return rateExpense + fixedExpense + eventExpense + leasingExpense;
 };
 
 // メインのシミュレーション関数
@@ -168,9 +223,23 @@ export const calculateSimulation = (
       vacancyLoss = probability * (months / 12);
     }
     const adjustedOccupancy = Math.min(100, Math.max(0, effectiveOccupancy * (1 - vacancyLoss)));
-    const grossIncome = baseAnnualRent * declineFactor * (adjustedOccupancy / 100);
+    const grossPotentialRent = baseAnnualRent * declineFactor;
+    const grossIncome = grossPotentialRent * (adjustedOccupancy / 100);
     const opExpenseRate = safeNumber(input.operatingExpenseRate, 0);
-    const opExpense = grossIncome * (opExpenseRate / 100);
+    const opExpense =
+      input.oerMode === "DETAILED"
+        ? calculateOerDetailed(
+            year,
+            grossPotentialRent,
+            grossIncome,
+            Array.isArray(input.oerRateItems) ? input.oerRateItems : [],
+            Array.isArray(input.oerFixedItems) ? input.oerFixedItems : [],
+            Array.isArray(input.oerEventItems) ? input.oerEventItems : [],
+            input.oerLeasingEnabled ?? true,
+            safeNumber(input.oerLeasingMonths, 0),
+            safeNumber(input.oerLeasingTenancyYears, 0)
+          )
+        : grossIncome * (opExpenseRate / 100);
     const repairCost = Array.isArray(input.repairEvents)
       ? input.repairEvents.reduce((sum, event) => {
           if (event?.year !== year) return sum;
@@ -260,6 +329,7 @@ export const calculateSimulation = (
 
     results.push({
       year,
+      grossPotentialRent,
       income: grossIncome,
       expense: opExpense,
       propertyTax: fixedAssetTax,

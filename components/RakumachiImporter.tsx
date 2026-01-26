@@ -24,6 +24,18 @@ type ImportResponse = {
     title: string | null;
     propertyType: string | null;
     address: string | null;
+    access: string | null;
+    structure: string | null;
+    builtYearMonth: string | null;
+    landRight: string | null;
+    transactionType: string | null;
+    priceYen: number | null;
+    yieldPercent: number | null;
+    annualRentYen: number | null;
+    monthlyRentYen: number | null;
+    buildingAgeYears: number | null;
+    floorAreaSqm: number | null;
+    landAreaSqm: number | null;
     imageUrl: string | null;
   };
   warnings?: string[];
@@ -91,6 +103,7 @@ const toNumber = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+
 const normalizeFields = (fields: Record<string, ImportField>) => {
   const next = { ...fields };
   const price = next.priceYen?.value ?? null;
@@ -140,7 +153,6 @@ type Props = {
   selectedHistoryId?: string | null;
   onSelectHistory?: (id: string) => void;
   onClearHistory?: () => void;
-  highlightStep2?: boolean;
   onResultChange?: (hasResult: boolean) => void;
 };
 
@@ -151,7 +163,6 @@ export const RakumachiImporter = ({
   selectedHistoryId = null,
   onSelectHistory,
   onClearHistory,
-  highlightStep2 = false,
   onResultChange,
 }: Props) => {
   const [url, setUrl] = useState("");
@@ -161,6 +172,20 @@ export const RakumachiImporter = ({
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
+  const activeHistory = useMemo(
+    () =>
+      selectedHistoryId ? history.find((item) => item.id === selectedHistoryId) ?? null : null,
+    [history, selectedHistoryId]
+  );
+
+  useEffect(() => {
+    if (!selectedHistoryId) return;
+    const item = history.find((entry) => entry.id === selectedHistoryId);
+    if (item?.url) {
+      setUrl(item.url);
+    }
+  }, [history, selectedHistoryId]);
+
 
   const manualDefaults = useMemo(() => {
     const toDefault = (value: number, scale = 1) =>
@@ -263,10 +288,40 @@ export const RakumachiImporter = ({
             : fallback;
         nextDraft[field.key] = nextValue;
       });
+      const patch: Partial<PropertyInput> = {};
+      const getValue = (field: FieldConfig) => {
+        const raw = nextDraft[field.key];
+        if (!raw) return null;
+        if (field.type === "structure") return raw as StructureType;
+        const numeric = toNumber(raw);
+        if (numeric === null) return null;
+        if (field.type === "yen") return Math.round(numeric * 10000);
+        return numeric;
+      };
+
+      IMPORT_FIELDS.forEach((field) => {
+        if (!field.mapTo) return;
+        const value = getValue(field);
+        if (value !== null) {
+          patch[field.mapTo] = value as never;
+        }
+      });
+
+      MANUAL_FIELDS.forEach((field) => {
+        if (!field.mapTo) return;
+        const value = getValue(field);
+        if (value !== null) {
+          patch[field.mapTo] = value as never;
+        }
+      });
+
       setResult({ ...data, fields: normalized });
       setDraft(nextDraft);
-      setCollapsed({ extracted: false, manual: false });
-      setShowDetails(true);
+      setCollapsed({ extracted: true, manual: true });
+      setShowDetails(false);
+      if (Object.keys(patch).length > 0) {
+        onApply({ patch, listing: data.listing ?? null, url: url.trim() });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "解析に失敗しました。");
     } finally {
@@ -278,44 +333,9 @@ export const RakumachiImporter = ({
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleApply = () => {
-    const patch: Partial<PropertyInput> = {};
-    const getValue = (field: FieldConfig) => {
-      const raw = draft[field.key];
-      if (!raw) return null;
-      if (field.type === "structure") return raw as StructureType;
-      const numeric = toNumber(raw);
-      if (numeric === null) return null;
-      if (field.type === "yen") return Math.round(numeric * 10000);
-      return numeric;
-    };
-
-    IMPORT_FIELDS.forEach((field) => {
-      if (!field.mapTo) return;
-      const value = getValue(field);
-      if (value !== null) {
-        patch[field.mapTo] = value as never;
-      }
-    });
-
-    MANUAL_FIELDS.forEach((field) => {
-      if (!field.mapTo) return;
-      const value = getValue(field);
-      if (value !== null) {
-        patch[field.mapTo] = value as never;
-      }
-    });
-
-    if (Object.keys(patch).length > 0) {
-      onApply({ patch, listing: result?.listing ?? null, url: url.trim() });
-    }
-    setCollapsed((prev) => ({ ...prev, extracted: true, manual: true }));
-    setShowDetails(false);
-  };
-
   return (
     <div className="sheet-card import-card">
-      <div className={`import-body${showDetails ? "" : " compact"}`}>
+      <div className="import-body compact">
         <div className="import-row">
           <input
             type="url"
@@ -323,12 +343,17 @@ export const RakumachiImporter = ({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
-          <button type="button" className="section-toggle" onClick={handleAnalyze} disabled={loading}>
+          <button
+            type="button"
+            className="section-toggle"
+            onClick={handleAnalyze}
+            disabled={loading}
+          >
             {loading ? "解析中..." : "解析"}
           </button>
         </div>
         {history.length > 0 ? (
-          <div className={`import-history-row step-zone${highlightStep2 ? " active" : ""}`}>
+          <div className="import-history-row">
             <div className="import-history">
               {history.map((item) => {
                 const label = item.listing?.title ?? item.listing?.propertyType ?? "物件";
@@ -362,126 +387,7 @@ export const RakumachiImporter = ({
           </div>
         ) : null}
         {error ? <div className="auth-error">{error}</div> : null}
-        {result && showDetails ? (
-          <>
-            {result.warnings && result.warnings.length > 0 ? (
-              <div className="import-warnings">
-                {result.warnings.map((warning) => (
-                  <div key={warning} className="form-note">
-                    {warning}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="import-section" data-collapsed={collapsed.extracted}>
-              <div className="import-title-row">
-                <div className="import-title-group">
-                  <div className="import-title">抽出・推定された情報</div>
-                  {collapsed.extracted ? (
-                    <div className="import-inline-note">
-                      抽出 {sourceCounts.extracted} / 推定 {sourceCounts.inferred} / 未取得{" "}
-                      {sourceCounts.missing}
-                    </div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  data-open={!collapsed.extracted}
-                  onClick={() =>
-                    setCollapsed((prev) => ({ ...prev, extracted: !prev.extracted }))
-                  }
-                >
-                  {collapsed.extracted ? "▶ 開く" : "▼ 閉じる"}
-                </button>
-              </div>
-              {collapsed.extracted ? null : (
-                <div className="import-grid">
-                  {IMPORT_FIELDS.map((field) => {
-                    const source = result.fields[field.key]?.source ?? "missing";
-                    const note = result.fields[field.key]?.note;
-                    return (
-                      <div key={field.key} className="import-item">
-                        <div className="import-label">
-                          <span>{field.label}</span>
-                          <span className={`import-pill ${source}`}>{SOURCE_LABEL[source]}</span>
-                        </div>
-                        <div className="import-input">
-                          {field.type === "structure" ? (
-                            <select
-                              value={draft[field.key] ?? ""}
-                              onChange={(e) => handleDraftChange(field.key, e.target.value)}
-                            >
-                              <option value="">選択</option>
-                              {STRUCTURE_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type={field.type === "text" ? "text" : "number"}
-                              value={draft[field.key] ?? ""}
-                              onChange={(e) => handleDraftChange(field.key, e.target.value)}
-                            />
-                          )}
-                          {field.unit ? <span className="import-unit">{field.unit}</span> : null}
-                        </div>
-                        {note ? <div className="form-note">{note}</div> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div className="import-section" data-collapsed={collapsed.manual}>
-              <div className="import-title-row">
-                <div className="import-title-group">
-                  <div className="import-title">不足項目（要確認）</div>
-                  {collapsed.manual ? (
-                    <div className="import-inline-note">未入力のままでも反映できます。</div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  data-open={!collapsed.manual}
-                  onClick={() => setCollapsed((prev) => ({ ...prev, manual: !prev.manual }))}
-                >
-                  {collapsed.manual ? "▶ 開く" : "▼ 閉じる"}
-                </button>
-              </div>
-              {collapsed.manual ? null : (
-                <div className="import-grid">
-                  {MANUAL_FIELDS.map((field) => (
-                    <div key={field.key} className="import-item">
-                      <div className="import-label">
-                        <span>{field.label}</span>
-                        <span className="import-pill manual">{SOURCE_LABEL.manual}</span>
-                      </div>
-                      <div className="import-input">
-                        <input
-                          type={field.type === "text" ? "text" : "number"}
-                          value={draft[field.key] ?? ""}
-                          onChange={(e) => handleDraftChange(field.key, e.target.value)}
-                        />
-                        {field.unit ? <span className="import-unit">{field.unit}</span> : null}
-                      </div>
-                      <div className="form-note">空欄なら現状の値を維持します。</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="import-actions">
-              <span className="step-pill import-actions-step">Step2</span>
-              <button type="button" className="section-toggle" onClick={handleApply}>
-                シミュレーターに反映
-              </button>
-            </div>
-          </>
-        ) : null}
+        {result ? <div className="form-note">解析結果を自動で反映しました。</div> : null}
       </div>
     </div>
   );

@@ -57,6 +57,14 @@ const OPERATING_EXPENSE_TABLE: Record<StructureType, number> = {
 const normalizeAge = (age?: number) =>
   Number.isFinite(age) ? Math.max(0, Math.floor(age as number)) : null;
 
+const LOAN_DURATION_BONUS: Record<StructureType, number> = {
+  RC: 8,
+  SRC: 8,
+  S_HEAVY: 10,
+  S_LIGHT: 12,
+  WOOD: 15,
+};
+
 export const getSuggestedBuildingRatio = (structure: StructureType, age: number): number => {
   const safeAge = normalizeAge(age) ?? 0;
   const rows = BUILDING_RATIO_TABLE[structure];
@@ -77,8 +85,12 @@ export const getSuggestedLoanDuration = (
   const safeAge = normalizeAge(age);
   if (safeAge === null) return null;
   const legalLife = LEGAL_USEFUL_LIFE[structure];
-  const remaining = legalLife - safeAge;
-  return Math.min(35, Math.max(10, remaining));
+  const remaining = Math.max(0, legalLife - safeAge);
+  let optimistic = remaining + (LOAN_DURATION_BONUS[structure] ?? 0);
+  if (structure === "WOOD" && safeAge <= 10) {
+    optimistic = Math.max(optimistic, 35);
+  }
+  return Math.min(35, Math.max(10, Math.round(optimistic)));
 };
 
 export const getSuggestedOccupancyRate = (age?: number): number | null => {
@@ -122,6 +134,9 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
     isMissingNumber(input.operatingExpenseRate)
       ? getSuggestedOperatingExpenseRate(structure, buildingAge)
       : null;
+  const hasOerMode = input.oerMode === "SIMPLE" || input.oerMode === "DETAILED";
+  const oerLeasingEnabled =
+    typeof input.oerLeasingEnabled === "boolean" ? input.oerLeasingEnabled : true;
 
   return {
     ...input,
@@ -131,6 +146,19 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
     loanDuration: suggestedLoanDuration ?? input.loanDuration,
     occupancyRate: suggestedOccupancyRate ?? input.occupancyRate,
     operatingExpenseRate: suggestedOperatingExpenseRate ?? input.operatingExpenseRate,
+    unitCount: isMissingNumber(input.unitCount) ? 0 : input.unitCount,
+    cleaningVisitsPerMonth: isMissingNumber(input.cleaningVisitsPerMonth)
+      ? 2
+      : input.cleaningVisitsPerMonth,
+    oerMode: hasOerMode ? input.oerMode : "SIMPLE",
+    oerRateItems: Array.isArray(input.oerRateItems) ? input.oerRateItems : [],
+    oerFixedItems: Array.isArray(input.oerFixedItems) ? input.oerFixedItems : [],
+    oerEventItems: Array.isArray(input.oerEventItems) ? input.oerEventItems : [],
+    oerLeasingEnabled,
+    oerLeasingMonths: isMissingNumber(input.oerLeasingMonths) ? 2 : input.oerLeasingMonths,
+    oerLeasingTenancyYears: isMissingNumber(input.oerLeasingTenancyYears)
+      ? 2
+      : input.oerLeasingTenancyYears,
     rentDeclineRate: isMissingNumber(input.rentDeclineRate) ? 0.5 : input.rentDeclineRate,
     waterContributionRate: isMissingNumber(input.waterContributionRate) ? 0.2 : input.waterContributionRate,
     fireInsuranceRate: isMissingNumber(input.fireInsuranceRate) ? 0.4 : input.fireInsuranceRate,
@@ -145,7 +173,7 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
       ? 50
       : input.buildingEvaluationRate,
     landTaxReductionRate: isMissingNumber(input.landTaxReductionRate) ? 16.67 : input.landTaxReductionRate,
-    propertyTaxRate: isMissingNumber(input.propertyTaxRate) ? 1.4 : input.propertyTaxRate,
+    propertyTaxRate: isMissingNumber(input.propertyTaxRate) ? 1.7 : input.propertyTaxRate,
     vacancyModel: input.vacancyModel ?? ("FIXED" as VacancyModelType),
     vacancyCycleYears: isMissingNumber(input.vacancyCycleYears) ? 4 : input.vacancyCycleYears,
     vacancyCycleMonths: isMissingNumber(input.vacancyCycleMonths) ? 3 : input.vacancyCycleMonths,
@@ -196,6 +224,8 @@ const AUTO_FILL_KEYS: (keyof PropertyInput)[] = [
   "loanDuration",
   "occupancyRate",
   "operatingExpenseRate",
+  "oerLeasingMonths",
+  "oerLeasingTenancyYears",
   "rentDeclineRate",
   "waterContributionRate",
   "fireInsuranceRate",
