@@ -7,10 +7,11 @@ import {
   useState,
   type Dispatch,
   type FormEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   DndContext,
   PointerSensor,
@@ -30,6 +31,7 @@ import { SimulationForm } from "../components/SimulationForm";
 import { SimulationChart } from "../components/SimulationChart";
 import { DscrChart } from "../components/DscrChart";
 import { RakumachiImporter, ImportHistoryItem } from "../components/RakumachiImporter";
+import { ListingSummary } from "../components/ListingSummary";
 import { calculateNPV, calculateIRR } from "../utils/finance";
 import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils/simulation";
 import { PropertyInput, ScenarioConfig, YearlyResult } from "../utils/types";
@@ -73,6 +75,7 @@ const DEFAULT_INPUT: PropertyInput = {
   registrationCostRate: 0,
   acquisitionTaxRate: 0,
   acquisitionLandReductionRate: 0,
+  equityRatio: 0,
   loanAmount: 0,
   interestRate: 0,
   loanDuration: 0,
@@ -130,13 +133,13 @@ const DEFAULT_LEFT_ORDER = [
 ];
 const DEFAULT_RIGHT_ORDER = [
   "kpi",
+  "charts",
   "cashflow",
+  "simulation",
   "exit",
   "deadcross",
   "scenario",
-  "simulation",
   "repayment",
-  "charts",
   "dscr",
 ];
 
@@ -510,9 +513,8 @@ export default function Home() {
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiPosition, setAiPosition] = useState<{ x: number; y: number } | null>(null);
-  const [aiDragging, setAiDragging] = useState(false);
   const [aiCollapsed, setAiCollapsed] = useState(false);
+  const [pendingAiPromptId, setPendingAiPromptId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [activeKpiInfo, setActiveKpiInfo] = useState<KpiInfoKey | null>(null);
   const [activeTableInfo, setActiveTableInfo] = useState<string | null>(null);
@@ -528,8 +530,7 @@ export default function Home() {
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
   const resultsRef = useRef<HTMLElement | null>(null);
-  const aiPanelRef = useRef<HTMLDivElement | null>(null);
-  const aiDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const aiMessagesRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const saveMenuRef = useRef<HTMLDivElement | null>(null);
   const sensors = useSensors(
@@ -707,6 +708,9 @@ export default function Home() {
         return [nextItem, ...prev].slice(0, 5);
       });
       setSelectedImportId(id);
+      if (payload.listing) {
+        setPendingAiPromptId(id);
+      }
     }
     setHasViewedResults(false);
     setHasCompletedSteps(false);
@@ -778,57 +782,21 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!aiDragging) return;
-    const handleMove = (event: PointerEvent) => {
-      if (!aiDragOffsetRef.current) return;
-      const panel = aiPanelRef.current;
-      if (!panel) return;
-      const padding = 12;
-      const offsetX = aiDragOffsetRef.current.x;
-      const offsetY = aiDragOffsetRef.current.y;
-      const panelWidth = panel.offsetWidth;
-      const panelHeight = panel.offsetHeight;
-      const nextX = Math.min(
-        Math.max(padding, event.clientX - offsetX),
-        window.innerWidth - panelWidth - padding
-      );
-      const nextY = Math.min(
-        Math.max(padding, event.clientY - offsetY),
-        window.innerHeight - panelHeight - padding
-      );
-      setAiPosition({ x: nextX, y: nextY });
-    };
-    const handleUp = () => {
-      setAiDragging(false);
-      aiDragOffsetRef.current = null;
-    };
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-  }, [aiDragging]);
+    if (aiCollapsed) return;
+    const container = aiMessagesRef.current;
+    if (!container) return;
+    const raf = requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [aiMessages, aiLoading, aiCollapsed]);
 
-  const handleAiDragStart = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const panel = aiPanelRef.current;
-    if (!panel) return;
-    const rect = panel.getBoundingClientRect();
-    aiDragOffsetRef.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    setAiPosition({ x: rect.left, y: rect.top });
-    setAiDragging(true);
-  };
-
-  const handleAskAi = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!aiInput.trim() || aiLoading) return;
+  const askAi = async (question: string) => {
+    const trimmed = question.trim();
+    if (!trimmed || aiLoading) return;
     const nextMessages: { role: "user" | "assistant"; content: string }[] = [
       ...aiMessages,
-      { role: "user", content: aiInput.trim() },
+      { role: "user", content: trimmed },
     ];
     const limitedMessages = nextMessages.slice(-10);
     setAiMessages(limitedMessages);
@@ -859,6 +827,21 @@ export default function Home() {
       setAiLoading(false);
     }
   };
+
+  const handleAskAi = (event: FormEvent) => {
+    event.preventDefault();
+    void askAi(aiInput);
+  };
+
+  useEffect(() => {
+    if (!pendingAiPromptId) return;
+    if (aiLoading) return;
+    if (selectedImport?.id !== pendingAiPromptId) return;
+    setPendingAiPromptId(null);
+    void askAi(
+      "この物件の全体的な評価をお願いします。また、立地や土地の価値、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
+    );
+  }, [pendingAiPromptId, selectedImport, aiLoading, askAi]);
 
   const scenarioConfig: ScenarioConfig = {
     interestRateShockEnabled: inputData.scenarioEnabled,
@@ -1044,6 +1027,8 @@ export default function Home() {
         structure: inputData.structure,
         buildingAge: inputData.buildingAge,
       },
+      listing: selectedImport?.listing ?? null,
+      listingUrl: selectedImport?.url ?? null,
       performance: {
         avgCashFlow,
         minCashFlow,
@@ -1065,6 +1050,7 @@ export default function Home() {
   }, [
     results,
     inputData,
+    selectedImport,
     exitYear,
     exitNetProceeds,
     exitIrr,
@@ -2640,167 +2626,190 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="step-bar">
-        {[
-          { id: 1, label: "URL入力" },
-          { id: 2, label: "入力調整" },
-          { id: 3, label: "結果を見る" },
-        ].map((step) => (
+      <div className="app-body">
+        <div className="app-main">
+          <div className="step-bar">
+            {[
+              { id: 1, label: "URL入力" },
+              { id: 2, label: "入力調整" },
+              { id: 3, label: "結果を見る" },
+            ].map((step) => (
+              <div
+                key={step.id}
+                className={`step-item${currentStep === step.id ? " active" : ""}${
+                  currentStep === step.id && (step.id === 3 || hasCompletedSteps)
+                    ? " no-pulse"
+                    : ""
+                }`}
+              >
+                <span className="step-index">Step {step.id}</span>
+                <span className="step-text">{step.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="step-head">
+            <span className="step-pill">Step 1</span>
+            <span className="step-title">URL入力</span>
+          </div>
           <div
-            key={step.id}
-            className={`step-item${currentStep === step.id ? " active" : ""}${
-              currentStep === step.id && (step.id === 3 || hasCompletedSteps) ? " no-pulse" : ""
+            className={`top-import step-zone${
+              !hasCompletedSteps && currentStep === 1 ? " active" : ""
             }`}
           >
-            <span className="step-index">Step {step.id}</span>
-            <span className="step-text">{step.label}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="step-head">
-        <span className="step-pill">Step 1</span>
-        <span className="step-title">URL入力</span>
-      </div>
-      <div
-        className={`top-import step-zone${
-          !hasCompletedSteps && currentStep === 1 ? " active" : ""
-        }`}
-      >
-        <RakumachiImporter
-          currentInput={inputData}
-          onApply={handleImportApply}
-          history={importHistory}
-          selectedHistoryId={selectedImportId}
-          onSelectHistory={handleImportSelect}
-          onClearHistory={handleImportClear}
-          onResultChange={handleImportResultChange}
-        />
-      </div>
-
-      <div
-        className={`input-section step-zone${
-          !hasCompletedSteps && currentStep === 2 ? " active" : ""
-        }`}
-      >
-        <div className="input-section-head">
-          <span className="step-pill">Step 2</span>
-          <span className="input-section-badge">ユーザー入力</span>
-        </div>
-        <div className="sheet-top">
-            <SimulationForm
-              key={formVersion}
-              initialData={inputData}
-              onCalculate={(data) => setInputData(data)}
-              autoFilledKeys={autoFilledKeys}
-              onFieldTouch={handleFieldTouch}
-              listing={selectedImport?.listing ?? null}
-              listingUrl={selectedImport?.url ?? null}
+            <RakumachiImporter
+              currentInput={inputData}
+              onApply={handleImportApply}
+              history={importHistory}
+              selectedHistoryId={selectedImportId}
+              onSelectHistory={handleImportSelect}
+              onClearHistory={handleImportClear}
+              onResultChange={handleImportResultChange}
             />
-        </div>
-      </div>
-
-      <div className="input-section-head output-section-head">
-        <span className="step-pill">Step 3</span>
-        <span className="input-section-badge">シミュレーション結果</span>
-      </div>
-      <section className="sheet" ref={resultsRef}>
-        <div className="sheet-grid">
-          <div className="sheet-sidebar">
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={(event) => handleReorder(event, setLeftOrder)}
-            >
-              <SortableContext items={leftOrder} strategy={verticalListSortingStrategy}>
-                {leftOrder.map((id) => (
-                  <SortableCard key={id} id={id}>
-                    {leftPanels[id]}
-                  </SortableCard>
-                ))}
-              </SortableContext>
-            </DndContext>
           </div>
 
-          <div className="sheet-main">
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={(event) => handleReorder(event, setRightOrder)}
-            >
-              <SortableContext items={rightOrder} strategy={verticalListSortingStrategy}>
-                {rightOrder.map((id) => (
-                  <SortableCard key={id} id={id}>
-                    {rightPanels[id]}
-                  </SortableCard>
-                ))}
-              </SortableContext>
-            </DndContext>
-          </div>
-        </div>
-      </section>
+          {selectedImport?.listing ? (
+            <>
+              <div className="step-head">
+                <span className="step-pill">Step 1.5</span>
+                <span className="step-title">取得した物件情報</span>
+              </div>
+              <div className="listing-section step-zone">
+                <ListingSummary
+                  listing={selectedImport.listing}
+                  listingUrl={selectedImport.url}
+                />
+              </div>
+            </>
+          ) : null}
 
-      <div
-        ref={aiPanelRef}
-        className={`ai-float-panel${aiPosition ? " is-dragged" : ""}${
-          aiDragging ? " is-dragging" : ""
-        }`}
-        role="dialog"
-        aria-label="AIチャット"
-        style={aiPosition ? { left: aiPosition.x, top: aiPosition.y } : undefined}
-      >
-        <div
-          className="ai-head ai-drag-handle"
-          onPointerDown={handleAiDragStart}
-          role="button"
-          aria-label="ドラッグして移動"
-          aria-grabbed={aiDragging}
-        >
-          <h3 className="table-title">AIチャット</h3>
-          <div className="ai-head-actions">
-            {aiLoading ? <span className="ai-status">生成中...</span> : null}
-            <button
-              type="button"
-              className="section-toggle"
-              onClick={() => setAiCollapsed((prev) => !prev)}
-              aria-expanded={!aiCollapsed}
-            >
-              {aiCollapsed ? "▶ 開く" : "▼ 閉じる"}
-            </button>
-          </div>
-        </div>
-        {!aiCollapsed ? (
-          <>
-            <div className="ai-messages">
-              {aiMessages.length === 0 && !aiLoading ? (
-                <div className="form-note">
-                  質問を入力してください。Step4到達後の結果を含めて回答します。
-                </div>
-              ) : null}
-              {aiMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={`ai-message ${message.role}`}
-                >
-                  {message.content}
-                </div>
-              ))}
+          <div
+            className={`input-section step-zone${
+              !hasCompletedSteps && currentStep === 2 ? " active" : ""
+            }`}
+          >
+            <div className="input-section-head">
+              <span className="step-pill">Step 2</span>
+              <span className="input-section-badge">ユーザー入力</span>
             </div>
-            {aiError ? <div className="auth-error">{aiError}</div> : null}
-            <form className="ai-input-row" onSubmit={handleAskAi}>
-              <input
-                type="text"
-                placeholder="AIに質問する"
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                disabled={aiLoading}
+            <div className="sheet-top">
+              <SimulationForm
+                key={formVersion}
+                initialData={inputData}
+                onCalculate={(data) => setInputData(data)}
+                autoFilledKeys={autoFilledKeys}
+                onFieldTouch={handleFieldTouch}
+                listing={selectedImport?.listing ?? null}
               />
-              <button type="submit" className="section-toggle" disabled={aiLoading}>
-                送信
-              </button>
-            </form>
-          </>
-        ) : null}
+            </div>
+          </div>
+
+          <div className="input-section-head output-section-head">
+            <span className="step-pill">Step 3</span>
+            <span className="input-section-badge">シミュレーション結果</span>
+          </div>
+          <section className="sheet" ref={resultsRef}>
+            <div className="sheet-grid">
+              <div className="sheet-sidebar">
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={(event) => handleReorder(event, setLeftOrder)}
+                >
+                  <SortableContext items={leftOrder} strategy={verticalListSortingStrategy}>
+                    {leftOrder.map((id) => (
+                      <SortableCard key={id} id={id}>
+                        {leftPanels[id]}
+                      </SortableCard>
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              </div>
+
+              <div className="sheet-main">
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={(event) => handleReorder(event, setRightOrder)}
+                >
+                  <SortableContext items={rightOrder} strategy={verticalListSortingStrategy}>
+                    {rightOrder.map((id) => (
+                      <SortableCard key={id} id={id}>
+                        {rightPanels[id]}
+                      </SortableCard>
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside className="app-aside" aria-label="AIチャット">
+          <div className={`ai-panel${aiCollapsed ? " is-collapsed" : ""}`}>
+            <div className="ai-head">
+              <h3 className="table-title">AIチャット</h3>
+              <div className="ai-head-actions">
+                {aiLoading ? <span className="ai-status">生成中...</span> : null}
+                <button
+                  type="button"
+                  className="section-toggle"
+                  onClick={() => setAiCollapsed((prev) => !prev)}
+                  aria-expanded={!aiCollapsed}
+                >
+                  {aiCollapsed ? "▶ 開く" : "▼ 閉じる"}
+                </button>
+              </div>
+            </div>
+            {!aiCollapsed ? (
+              <>
+                <div className="ai-messages" ref={aiMessagesRef}>
+                  {aiMessages.length === 0 && !aiLoading ? (
+                    <div className="form-note">
+                      質問を入力してください。Step4到達後の結果を含めて回答します。
+                    </div>
+                  ) : null}
+                  {aiMessages.map((message, index) =>
+                    message.role === "user" ? (
+                      <div key={`user-${index}`} className="ai-message user">
+                        {message.content}
+                      </div>
+                    ) : (
+                      <div key={`assistant-${index}`} className="ai-response">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )
+                  )}
+                  {aiLoading ? (
+                    <div className="ai-typing" role="status" aria-live="polite">
+                      <span>AIが考えています</span>
+                      <span className="ai-typing-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                {aiError ? <div className="auth-error">{aiError}</div> : null}
+                <form className="ai-input-row" onSubmit={handleAskAi}>
+                  <input
+                    type="text"
+                    placeholder="AIに質問する"
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    disabled={aiLoading}
+                  />
+                  <button type="submit" className="section-toggle" disabled={aiLoading}>
+                    送信
+                  </button>
+                </form>
+              </>
+            ) : null}
+          </div>
+        </aside>
       </div>
     </main>
   );

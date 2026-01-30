@@ -122,8 +122,26 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
   const buildingAge = input.buildingAge;
   const suggestedBuildingRatio =
     isMissingNumber(input.buildingRatio) ? getSuggestedBuildingRatio(structure, buildingAge) : null;
+  const suggestedEquityRatio =
+    isMissingNumber(input.equityRatio) && input.price > 0
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            ((input.price - (input.loanAmount ?? Math.round(input.price * 0.95))) / input.price) * 100
+          )
+        )
+      : null;
   const suggestedLoanAmount =
-    isMissingNumber(input.loanAmount) && input.price > 0 ? Math.round(input.price * 0.95) : null;
+    isMissingNumber(input.loanAmount) && input.price > 0
+      ? Math.max(
+          0,
+          Math.round(
+            input.price *
+              (1 - (suggestedEquityRatio ?? input.equityRatio ?? 5) / 100)
+          )
+        )
+      : null;
   const suggestedInterestRate =
     isMissingNumber(input.interestRate) ? getSuggestedInterestRate(structure) : null;
   const suggestedLoanDuration =
@@ -141,6 +159,7 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
   return {
     ...input,
     buildingRatio: suggestedBuildingRatio ?? input.buildingRatio,
+    equityRatio: suggestedEquityRatio ?? input.equityRatio,
     loanAmount: suggestedLoanAmount ?? input.loanAmount,
     interestRate: suggestedInterestRate ?? input.interestRate,
     loanDuration: suggestedLoanDuration ?? input.loanDuration,
@@ -219,6 +238,7 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
 
 const AUTO_FILL_KEYS: (keyof PropertyInput)[] = [
   "buildingRatio",
+  "equityRatio",
   "loanAmount",
   "interestRate",
   "loanDuration",

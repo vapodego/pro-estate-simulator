@@ -118,6 +118,11 @@ const INPUT_HELP: Record<string, InputHelp> = {
     body:
       "説明：ローンで借りる金額（元本）です。\n結果への影響：返済額とキャッシュフロー（CF）に直結します。\nコツ：「物件価格−頭金」だけでなく、諸費用を借りる場合はその分も加えます。",
   },
+  equityRatio: {
+    title: "自己資金（%）",
+    body:
+      "説明：購入時に自己資金で負担する割合です。\n結果への影響：借入額と返済額、自己資金効率（CCR）に影響します。\nコツ：金融機関の条件に合わせて入力し、不明な場合は5〜10%で試算すると安全です。",
+  },
   interestRate: {
     title: "金利（%）",
     body:
@@ -337,11 +342,15 @@ const inferOerPropertyType = (
 
 type ListingPreview = {
   title: string | null;
+  propertyName?: string | null;
   propertyType: string | null;
   address: string | null;
   access?: string | null;
   structure?: string | null;
   builtYearMonth?: string | null;
+  landRight?: string | null;
+  transactionType?: string | null;
+  priceDisplay?: string | null;
   landRight?: string | null;
   transactionType?: string | null;
   priceYen?: number | null;
@@ -351,7 +360,27 @@ type ListingPreview = {
   buildingAgeYears?: number | null;
   floorAreaSqm?: number | null;
   landAreaSqm?: number | null;
-  imageUrl: string | null;
+  privateRoadAreaSqm?: number | null;
+  layout?: string | null;
+  floors?: string | null;
+  unitCount?: number | null;
+  totalUnits?: number | null;
+  parking?: string | null;
+  buildingCoveragePercent?: number | null;
+  floorAreaRatioPercent?: number | null;
+  roadAccess?: string | null;
+  landCategory?: string | null;
+  cityPlanningArea?: string | null;
+  zoning?: string | null;
+  nationalLandReport?: string | null;
+  currentStatus?: string | null;
+  handoverDate?: string | null;
+  buildingConfirmationNumber?: string | null;
+  managementNumber?: string | null;
+  nextUpdateDate?: string | null;
+  infoRegisteredDate?: string | null;
+  notes?: string | null;
+  imageUrl?: string | null;
 };
 
 interface Props {
@@ -360,7 +389,6 @@ interface Props {
   autoFilledKeys?: (keyof PropertyInput)[];
   onFieldTouch?: (key: keyof PropertyInput) => void;
   listing?: ListingPreview | null;
-  listingUrl?: string | null;
 }
 
 export const SimulationForm: React.FC<Props> = ({
@@ -369,7 +397,6 @@ export const SimulationForm: React.FC<Props> = ({
   autoFilledKeys = [],
   onFieldTouch,
   listing = null,
-  listingUrl = null,
 }) => {
   const [formData, setFormData] = useState<PropertyInput>(initialData);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -383,14 +410,12 @@ export const SimulationForm: React.FC<Props> = ({
   const [buildingRatioTouched, setBuildingRatioTouched] = useState(false);
   const [oerTypeTouched, setOerTypeTouched] = useState(false);
   const [oerAgeTouched, setOerAgeTouched] = useState(false);
-  const [listingImageError, setListingImageError] = useState(false);
   const [oerPropertyType, setOerPropertyType] = useState<OerPropertyType>(() =>
     inferOerPropertyType(listing?.propertyType, initialData.structure)
   );
   const [oerAgeBand, setOerAgeBand] = useState<OerAgeBand>(() =>
     inferOerAgeBand(initialData.buildingAge)
   );
-  const [showOerTemplateTable, setShowOerTemplateTable] = useState(false);
   const [openPanels, setOpenPanels] = useState({
     basic: true,
     loan: true,
@@ -459,85 +484,10 @@ export const SimulationForm: React.FC<Props> = ({
     renderHelpLabel(text, key, key);
   const getInputHelpText = (helpKey: string, fallbackTitle: string) =>
     getInputHelp(helpKey, fallbackTitle).body;
-  const formatManYen = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return null;
-    const man = Math.round((value / 10000) * 10) / 10;
-    const hasDecimal = Math.abs(man % 1) > 0;
-    return `${man.toLocaleString("ja-JP", {
-      minimumFractionDigits: hasDecimal ? 1 : 0,
-      maximumFractionDigits: 1,
-    })}万円`;
-  };
-  const formatPercent = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return null;
-    return `${value.toFixed(2)}%`;
-  };
-  const formatArea = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return null;
-    const rounded = Math.round(value * 100) / 100;
-    return `${rounded.toLocaleString("ja-JP", {
-      minimumFractionDigits: rounded % 1 ? 2 : 0,
-      maximumFractionDigits: 2,
-    })}㎡`;
-  };
-  const listingUrlLabel = useMemo(() => {
-    if (!listingUrl) return "";
-    try {
-      const parsed = new URL(listingUrl);
-      const path = parsed.pathname.replace(/\/$/, "");
-      return `${parsed.hostname}${path}`;
-    } catch {
-      return listingUrl;
-    }
-  }, [listingUrl]);
-  const listingImageSrc =
-    listing?.imageUrl && listingUrl
-      ? `/api/rakumachi-image?url=${encodeURIComponent(
-          listing.imageUrl
-        )}&ref=${encodeURIComponent(listingUrl)}`
-      : null;
-  const listingPriceText = formatManYen(listing?.priceYen ?? null);
-  const listingYieldText = formatPercent(listing?.yieldPercent ?? null);
-  const listingAnnualText = formatManYen(listing?.annualRentYen ?? null);
-  const listingMonthlyText = formatManYen(listing?.monthlyRentYen ?? null);
-  const listingIncomeText = listingAnnualText
-    ? `${listingAnnualText}${listingMonthlyText ? ` (${listingMonthlyText}/月)` : ""}`
-    : listingMonthlyText
-      ? `${listingMonthlyText}/月`
-      : null;
-  const listingBuiltText = (() => {
-    if (listing?.builtYearMonth && listing?.buildingAgeYears) {
-      return `${listing.builtYearMonth} (築${listing.buildingAgeYears}年)`;
-    }
-    if (listing?.builtYearMonth) return listing.builtYearMonth;
-    if (listing?.buildingAgeYears) return `築${listing.buildingAgeYears}年`;
-    return null;
-  })();
-  const listingFloorAreaText = formatArea(listing?.floorAreaSqm ?? null);
-  const listingLandAreaText = formatArea(listing?.landAreaSqm ?? null);
-  const listingFactsLeft = [
-    { label: "販売価格", value: listingPriceText },
-    { label: "表面利回り", value: listingYieldText },
-    { label: "想定年間収入", value: listingIncomeText },
-    { label: "所在地", value: listing?.address ?? null },
-    { label: "交通", value: listing?.access ?? null },
-  ].filter((item) => Boolean(item.value));
-  const listingFactsRight = [
-    { label: "建物構造", value: listing?.structure ?? null },
-    { label: "築年月", value: listingBuiltText },
-    { label: "土地権利", value: listing?.landRight ?? null },
-    { label: "建物面積", value: listingFloorAreaText },
-    { label: "土地面積", value: listingLandAreaText },
-    { label: "取引態様", value: listing?.transactionType ?? null },
-  ].filter((item) => Boolean(item.value));
   useEffect(() => {
     if (oerTypeTouched) return;
     setOerPropertyType(inferOerPropertyType(listing?.propertyType, formData.structure));
   }, [listing?.propertyType, formData.structure, oerTypeTouched]);
-
-  useEffect(() => {
-    setListingImageError(false);
-  }, [listing?.imageUrl, listingUrl]);
 
   useEffect(() => {
     if (oerAgeTouched) return;
@@ -978,6 +928,30 @@ export const SimulationForm: React.FC<Props> = ({
     onCalculate(newData);
   };
 
+  const getLoanFromEquityRatio = (price: number, equityRatio: number) => {
+    const safePrice = Number.isFinite(price) ? price : 0;
+    const safeRatio = Number.isFinite(equityRatio) ? equityRatio : 0;
+    return Math.max(0, Math.round(safePrice * (1 - safeRatio / 100)));
+  };
+
+  const handlePriceChange = (value: number) => {
+    const nextLoanAmount = getLoanFromEquityRatio(value, formData.equityRatio);
+    const next = { ...formData, price: value, loanAmount: nextLoanAmount };
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("price");
+    onCalculate(next);
+  };
+
+  const handleEquityRatioChange = (value: number) => {
+    const nextLoanAmount = getLoanFromEquityRatio(formData.price, value);
+    const next = { ...formData, equityRatio: value, loanAmount: nextLoanAmount };
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("equityRatio");
+    onCalculate(next);
+  };
+
   const applyAutoBuildingRatio = (nextData: PropertyInput) => {
     if (buildingRatioTouched) return nextData;
     const suggested = getSuggestedBuildingRatio(nextData.structure, nextData.buildingAge);
@@ -1301,61 +1275,6 @@ export const SimulationForm: React.FC<Props> = ({
         <div className="form-scroll">
           <div className="form-input-layout">
             <div className="form-input-left">
-              {listing ? (
-                <div className="form-section form-panel listing-panel">
-                  <div className="listing-card listing-card--large">
-                    {listingImageSrc && !listingImageError ? (
-                      <img
-                        src={listingImageSrc}
-                        alt="物件写真"
-                        loading="lazy"
-                        onError={() => setListingImageError(true)}
-                      />
-                    ) : (
-                      <div className="listing-placeholder">No Image</div>
-                    )}
-                    <div className="listing-meta">
-                      <div className="listing-header">
-                        {listing.propertyType ? (
-                          <span className="listing-chip">{listing.propertyType}</span>
-                        ) : null}
-                        {listing.title ? <div className="listing-title">{listing.title}</div> : null}
-                      </div>
-                      {listingFactsLeft.length || listingFactsRight.length ? (
-                        <div className="listing-facts">
-                          <div className="listing-facts-col">
-                            {listingFactsLeft.map((item) => (
-                              <div key={item.label} className="listing-fact">
-                                <span className="listing-fact-label">{item.label}</span>
-                                <span className="listing-fact-value">{item.value}</span>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="listing-facts-col">
-                            {listingFactsRight.map((item) => (
-                              <div key={item.label} className="listing-fact">
-                                <span className="listing-fact-label">{item.label}</span>
-                                <span className="listing-fact-value">{item.value}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {listingUrl ? (
-                        <a
-                          className="listing-url"
-                          href={listingUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={listingUrl}
-                        >
-                          {listingUrlLabel}
-                        </a>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
               {/* --- 1. 基本情報セクション --- */}
               <div className="form-section form-panel">
                 <div className="form-panel-head">
@@ -1377,7 +1296,7 @@ export const SimulationForm: React.FC<Props> = ({
                         <input
                           type="number"
                           value={displayValue(formData.price, 10000)} // 表示は万円単位
-                          onChange={(e) => handleChange("price", Number(e.target.value) * 10000)}
+                          onChange={(e) => handlePriceChange(Number(e.target.value) * 10000)}
                         />
                       </div>
                       <div>
@@ -1450,14 +1369,24 @@ export const SimulationForm: React.FC<Props> = ({
                   <>
                     <div className="form-grid one-col compact">
                       <div>
+                        {renderLabel("自己資金 (%)", "equityRatio")}
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={displayPercent(formData.equityRatio)}
+                          className={isAutoFilled("equityRatio") ? "auto-input" : undefined}
+                          onChange={(e) =>
+                            handleEquityRatioChange(Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div>
                         {renderLabel("借入金額 (万円)", "loanAmount")}
                         <input
                           type="number"
                           value={displayValue(formData.loanAmount, 10000)}
                           className={isAutoFilled("loanAmount") ? "auto-input" : undefined}
-                          onChange={(e) =>
-                            handleChange("loanAmount", Number(e.target.value) * 10000)
-                          }
+                          readOnly
                         />
                       </div>
                       <div>
@@ -1631,13 +1560,6 @@ export const SimulationForm: React.FC<Props> = ({
                           >
                             {oerModeValue === "SIMPLE" ? "テンプレ適用" : "内訳を生成"}
                           </button>
-                          <button
-                            type="button"
-                            className="section-toggle"
-                            onClick={() => setShowOerTemplateTable((prev) => !prev)}
-                          >
-                            {showOerTemplateTable ? "一覧を閉じる" : "テンプレ一覧"}
-                          </button>
                         </div>
                       </div>
                       <div>
@@ -1646,44 +1568,31 @@ export const SimulationForm: React.FC<Props> = ({
                         </p>
                       </div>
                     </div>
-                    {oerModeValue === "SIMPLE" ? (
-                      <div className="oer-assumptions">
-                        {oerIncludeAd ? (
-                          <span className="oer-assumption">AD・募集費 +{OER_AD_BONUS}%</span>
-                        ) : null}
-                        <span className="oer-assumption">
-                          小修繕積立 +{OER_REPAIR_BONUS}%
-                        </span>
-                        <span className="oer-assumption">予備費 +{OER_BUFFER_BONUS}%</span>
-                      </div>
-                    ) : null}
-                    {showOerTemplateTable ? (
-                      <div className="oer-template">
-                        <div className="oer-template-title">運営経費率テンプレ（固都税除外）</div>
-                        <table className="oer-template-table">
-                          <thead>
-                            <tr>
-                              <th>物件タイプ</th>
+                    <div className="oer-template">
+                      <div className="oer-template-title">運営経費率テンプレ（固都税除外）</div>
+                      <table className="oer-template-table">
+                        <thead>
+                          <tr>
+                            <th>物件タイプ</th>
+                            {OER_AGE_BANDS.map((band) => (
+                              <th key={band.value}>{band.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {OER_PROPERTY_OPTIONS.map((option) => (
+                            <tr key={option.value}>
+                              <td>{option.label}</td>
                               {OER_AGE_BANDS.map((band) => (
-                                <th key={band.value}>{band.label}</th>
+                                <td key={`${option.value}-${band.value}`}>
+                                  {OER_TEMPLATES[option.value][band.value].exclTax}%
+                                </td>
                               ))}
                             </tr>
-                          </thead>
-                          <tbody>
-                            {OER_PROPERTY_OPTIONS.map((option) => (
-                              <tr key={option.value}>
-                                <td>{option.label}</td>
-                                {OER_AGE_BANDS.map((band) => (
-                                  <td key={`${option.value}-${band.value}`}>
-                                    {OER_TEMPLATES[option.value][band.value].exclTax}%
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : null}
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
 
                     {oerModeValue === "SIMPLE" ? (
                       <div className="form-grid three-col compact">
@@ -2435,260 +2344,224 @@ export const SimulationForm: React.FC<Props> = ({
               ) : null}
             </div>
 
-            {/* --- 3. 高度な設定（アコーディオン） --- */}
+            {/* --- 3. 高度な設定（常時表示） --- */}
             <div className="form-section form-panel">
               <div className="form-panel-head">
                 <h3 className="form-section-title">高度な設定</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("advanced")}
-                  aria-expanded={openPanels.advanced}
-                >
-                  {openPanels.advanced ? "▼ 閉じる" : "▶ 開く"}
-                </button>
               </div>
-              {openPanels.advanced ? (
-                <>
-                  <div className="form-advanced-head">
-                    <span className="form-section-title">詳細設定</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowAdvanced(!showAdvanced)}
-                      className="form-toggle"
-                    >
-                      {showAdvanced
-                        ? "▼ シンプル表示に戻す"
-                        : "▶ 高度な設定を表示 (設備分離・税務など)"}
-                    </button>
-                  </div>
-                  {showAdvanced ? (
-                    <div className="form-advanced">
-                      {/* 設備分離設定 [cite: 666-667] */}
-                      <div className="form-advanced-block">
-                        <div className="inline-toggle form-split-row">
-                          {renderHelpLabel("減価償却の設備分離", "enableEquipmentSplit")}
-                          <div className="inline-toggle">
-                            <input
-                              type="checkbox"
-                              id="equipmentSplit"
-                              checked={formData.enableEquipmentSplit}
-                              onChange={(e) => handleChange("enableEquipmentSplit", e.target.checked)}
-                            />
-                            <label htmlFor="equipmentSplit" className="inline-label">
-                              有効にする
-                              {renderInfoButton("enableEquipmentSplit", "有効にする")}
-                            </label>
-                          </div>
-                        </div>
-                        <p className="form-note">
-                          建物価格の一部を「設備（耐用年数15年）」として計算し、初期の節税効果を高めます。
-                        </p>
-                        {formData.enableEquipmentSplit ? (
-                          <>
-                            <div className="form-grid two-col">
-                              <div>
-                                {renderHelpLabel("設備比率 (%)", "equipmentRatio")}
-                                <input
-                                  type="number"
-                                  value={displayPercent(formData.equipmentRatio)}
-                                  onChange={(e) =>
-                                    handleChange("equipmentRatio", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                              <div>
-                                {renderHelpLabel("設備耐用年数 (年)", "equipmentUsefulLife")}
-                                <input
-                                  type="number"
-                                  value={displayValue(equipmentUsefulLifeValue)}
-                                  onChange={(e) =>
-                                    handleChange("equipmentUsefulLife", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                            </div>
-                            <div className="form-note">推奨値: RCなら20〜30%、設備は15年目安</div>
-                          </>
-                        ) : null}
-                      </div>
-
-                      {/* 税務設定 [cite: 670-671] */}
-                      <div className="form-advanced-block">
-                        {renderHelpLabel("税務モード", "taxType")}
-                        <div className="form-grid two-col">
-                          <label className="inline-label">
-                            <input
-                              type="radio"
-                              name="taxType"
-                              value="INDIVIDUAL"
-                              checked={formData.taxType === "INDIVIDUAL"}
-                              onChange={() => handleChange("taxType", "INDIVIDUAL")}
-                            />
-                            <span>個人 (累進課税)</span>
-                            {renderInfoButton("taxTypeIndividual", "個人 (累進課税)")}
-                          </label>
-                          <label className="inline-label">
-                            <input
-                              type="radio"
-                              name="taxType"
-                              value="CORPORATE"
-                              checked={formData.taxType === "CORPORATE"}
-                              onChange={() => handleChange("taxType", "CORPORATE")}
-                            />
-                            <span>法人 (実効税率+均等割)</span>
-                            {renderInfoButton("taxTypeCorporate", "法人 (実効税率+均等割)")}
-                          </label>
-                        </div>
-                        <div className="form-grid two-col">
-                          <div>
-                            {renderHelpLabel("他所得 (給与など/万円)", "otherIncome")}
-                            <input
-                              type="number"
-                              value={displayValue(otherIncomeValue, 10000)}
-                              onChange={(e) =>
-                                handleChange("otherIncome", Number(e.target.value) * 10000)
-                              }
-                            />
-                            <p className="form-note">累進課税 + 住民税10%で計算</p>
-                          </div>
-                          <div>
-                            {renderHelpLabel("法人均等割 (万円/年)", "corporateMinimumTax")}
-                            <input
-                              type="number"
-                              value={displayValue(corporateMinimumTaxValue, 10000)}
-                              onChange={(e) =>
-                                handleChange("corporateMinimumTax", Number(e.target.value) * 10000)
-                              }
-                            />
-                            <p className="form-note">※法人モードのみ適用</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 出口戦略（売却） */}
-                      <div className="form-advanced-block">
-                        <div className="inline-toggle form-split-row">
-                          {renderHelpLabel("出口戦略（売却）", "exitEnabled")}
-                          <div className="inline-toggle">
-                            <input
-                              type="checkbox"
-                              id="exitEnabled"
-                              checked={formData.exitEnabled}
-                              onChange={(e) => handleChange("exitEnabled", e.target.checked)}
-                            />
-                            <label htmlFor="exitEnabled" className="inline-label">
-                              有効にする
-                              {renderInfoButton("exitEnabled", "有効にする")}
-                            </label>
-                          </div>
-                        </div>
-                        <p className="form-note">
-                          売却年のNOIをキャップレートで割り戻して価格を算出します。
-                        </p>
-                        {formData.exitEnabled ? (
-                          <>
-                            <div className="form-grid two-col">
-                              <div>
-                                {renderHelpLabel("売却年数 (年)", "exitYear")}
-                                <input
-                                  type="number"
-                                  value={displayValue(exitYearValue)}
-                                  onChange={(e) => handleChange("exitYear", Number(e.target.value))}
-                                />
-                              </div>
-                              <div>
-                                {renderHelpLabel("想定キャップレート (%)", "exitCapRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitCapRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitCapRate", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                            </div>
-                            <div className="form-grid two-col">
-                              <div>
-                                {renderHelpLabel("仲介手数料率 (%)", "exitBrokerageRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitBrokerageRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitBrokerageRate", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                              <div>
-                                {renderHelpLabel("仲介手数料 (定額/万円)", "exitBrokerageFixed")}
-                                <input
-                                  type="number"
-                                  value={displayValue(exitBrokerageFixedValue, 10000)}
-                                  onChange={(e) =>
-                                    handleChange("exitBrokerageFixed", Number(e.target.value) * 10000)
-                                  }
-                                />
-                              </div>
-                            </div>
-                            <div className="form-grid two-col">
-                              <div>
-                                {renderHelpLabel("その他売却コスト率 (%)", "exitOtherCostRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitOtherCostRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitOtherCostRate", Number(e.target.value))
-                                  }
-                                />
-                                <p className="form-note">修繕・測量・登記などの概算</p>
-                              </div>
-                              <div>
-                                {renderHelpLabel("NPV割引率 (%)", "exitDiscountRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitDiscountRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitDiscountRate", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                            </div>
-                            <div className="form-grid two-col">
-                              <div>
-                                {renderHelpLabel("短期譲渡税率 (%)", "exitShortTermTaxRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitShortTermTaxRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitShortTermTaxRate", Number(e.target.value))
-                                  }
-                                />
-                              </div>
-                              <div>
-                                {renderHelpLabel("長期譲渡税率 (%)", "exitLongTermTaxRate")}
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={displayPercent(exitLongTermTaxRateValue)}
-                                  onChange={(e) =>
-                                    handleChange("exitLongTermTaxRate", Number(e.target.value))
-                                  }
-                                />
-                                <p className="form-note">5年超で長期を適用</p>
-                              </div>
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
+              {/* 設備分離設定 [cite: 666-667] */}
+              <div className="form-advanced-section">
+                <div className="inline-toggle form-split-row">
+                  {renderHelpLabel("減価償却の設備分離", "enableEquipmentSplit")}
+                  <div className="inline-toggle">
+                      <input
+                        type="checkbox"
+                        id="equipmentSplit"
+                        checked={formData.enableEquipmentSplit}
+                        onChange={(e) => handleChange("enableEquipmentSplit", e.target.checked)}
+                      />
+                      <label htmlFor="equipmentSplit" className="inline-label">
+                        有効にする
+                        {renderInfoButton("enableEquipmentSplit", "有効にする")}
+                      </label>
                     </div>
+                  </div>
+                  <p className="form-note">
+                    建物価格の一部を「設備（耐用年数15年）」として計算し、初期の節税効果を高めます。
+                  </p>
+                  {formData.enableEquipmentSplit ? (
+                    <>
+                      <div className="form-grid two-col">
+                        <div>
+                          {renderHelpLabel("設備比率 (%)", "equipmentRatio")}
+                          <input
+                            type="number"
+                            value={displayPercent(formData.equipmentRatio)}
+                            onChange={(e) => handleChange("equipmentRatio", Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          {renderHelpLabel("設備耐用年数 (年)", "equipmentUsefulLife")}
+                          <input
+                            type="number"
+                            value={displayValue(equipmentUsefulLifeValue)}
+                            onChange={(e) =>
+                              handleChange("equipmentUsefulLife", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="form-note">推奨値: RCなら20〜30%、設備は15年目安</div>
+                    </>
                   ) : null}
-                </>
-              ) : null}
+              </div>
+
+              {/* 税務設定 [cite: 670-671] */}
+              <div className="form-advanced-section">
+                  {renderHelpLabel("税務モード", "taxType")}
+                  <div className="form-grid two-col">
+                    <label className="inline-label">
+                      <input
+                        type="radio"
+                        name="taxType"
+                        value="INDIVIDUAL"
+                        checked={formData.taxType === "INDIVIDUAL"}
+                        onChange={() => handleChange("taxType", "INDIVIDUAL")}
+                      />
+                      <span>個人 (累進課税)</span>
+                      {renderInfoButton("taxTypeIndividual", "個人 (累進課税)")}
+                    </label>
+                    <label className="inline-label">
+                      <input
+                        type="radio"
+                        name="taxType"
+                        value="CORPORATE"
+                        checked={formData.taxType === "CORPORATE"}
+                        onChange={() => handleChange("taxType", "CORPORATE")}
+                      />
+                      <span>法人 (実効税率+均等割)</span>
+                      {renderInfoButton("taxTypeCorporate", "法人 (実効税率+均等割)")}
+                    </label>
+                  </div>
+                  <div className="form-grid two-col">
+                    <div>
+                      {renderHelpLabel("他所得 (給与など/万円)", "otherIncome")}
+                      <input
+                        type="number"
+                        value={displayValue(otherIncomeValue, 10000)}
+                        onChange={(e) =>
+                          handleChange("otherIncome", Number(e.target.value) * 10000)
+                        }
+                      />
+                      <p className="form-note">累進課税 + 住民税10%で計算</p>
+                    </div>
+                    <div>
+                      {renderHelpLabel("法人均等割 (万円/年)", "corporateMinimumTax")}
+                      <input
+                        type="number"
+                        value={displayValue(corporateMinimumTaxValue, 10000)}
+                        onChange={(e) =>
+                          handleChange("corporateMinimumTax", Number(e.target.value) * 10000)
+                        }
+                      />
+                      <p className="form-note">※法人モードのみ適用</p>
+                    </div>
+                  </div>
+              </div>
+
+              {/* 出口戦略（売却） */}
+              <div className="form-advanced-section">
+                  <div className="inline-toggle form-split-row">
+                    {renderHelpLabel("出口戦略（売却）", "exitEnabled")}
+                    <div className="inline-toggle">
+                      <input
+                        type="checkbox"
+                        id="exitEnabled"
+                        checked={formData.exitEnabled}
+                        onChange={(e) => handleChange("exitEnabled", e.target.checked)}
+                      />
+                      <label htmlFor="exitEnabled" className="inline-label">
+                        有効にする
+                        {renderInfoButton("exitEnabled", "有効にする")}
+                      </label>
+                    </div>
+                  </div>
+                  <p className="form-note">
+                    売却年のNOIをキャップレートで割り戻して価格を算出します。
+                  </p>
+                  {formData.exitEnabled ? (
+                    <>
+                      <div className="form-grid two-col">
+                        <div>
+                          {renderHelpLabel("売却年数 (年)", "exitYear")}
+                          <input
+                            type="number"
+                            value={displayValue(exitYearValue)}
+                            onChange={(e) => handleChange("exitYear", Number(e.target.value))}
+                          />
+                        </div>
+                        <div>
+                          {renderHelpLabel("想定キャップレート (%)", "exitCapRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitCapRateValue)}
+                            onChange={(e) => handleChange("exitCapRate", Number(e.target.value))}
+                          />
+                        </div>
+                      </div>
+                      <div className="form-grid two-col">
+                        <div>
+                          {renderHelpLabel("仲介手数料率 (%)", "exitBrokerageRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitBrokerageRateValue)}
+                            onChange={(e) =>
+                              handleChange("exitBrokerageRate", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                        <div>
+                          {renderHelpLabel("仲介手数料 (定額/万円)", "exitBrokerageFixed")}
+                          <input
+                            type="number"
+                            value={displayValue(exitBrokerageFixedValue, 10000)}
+                            onChange={(e) =>
+                              handleChange("exitBrokerageFixed", Number(e.target.value) * 10000)
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="form-grid two-col">
+                        <div>
+                          {renderHelpLabel("その他売却コスト率 (%)", "exitOtherCostRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitOtherCostRateValue)}
+                            onChange={(e) => handleChange("exitOtherCostRate", Number(e.target.value))}
+                          />
+                          <p className="form-note">修繕・測量・登記などの概算</p>
+                        </div>
+                        <div>
+                          {renderHelpLabel("NPV割引率 (%)", "exitDiscountRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitDiscountRateValue)}
+                            onChange={(e) => handleChange("exitDiscountRate", Number(e.target.value))}
+                          />
+                        </div>
+                      </div>
+                      <div className="form-grid two-col">
+                        <div>
+                          {renderHelpLabel("短期譲渡税率 (%)", "exitShortTermTaxRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitShortTermTaxRateValue)}
+                            onChange={(e) =>
+                              handleChange("exitShortTermTaxRate", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                        <div>
+                          {renderHelpLabel("長期譲渡税率 (%)", "exitLongTermTaxRate")}
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={displayPercent(exitLongTermTaxRateValue)}
+                            onChange={(e) =>
+                              handleChange("exitLongTermTaxRate", Number(e.target.value))
+                            }
+                          />
+                          <p className="form-note">5年超で長期を適用</p>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+              </div>
             </div>
                 </div>
               </div>

@@ -22,20 +22,42 @@ type ImportResponse = {
   fields: Record<string, ImportField>;
   listing?: {
     title: string | null;
+    propertyName?: string | null;
     propertyType: string | null;
     address: string | null;
     access: string | null;
     structure: string | null;
     builtYearMonth: string | null;
+    buildingAgeYears: number | null;
     landRight: string | null;
     transactionType: string | null;
     priceYen: number | null;
+    priceDisplay: string | null;
     yieldPercent: number | null;
     annualRentYen: number | null;
     monthlyRentYen: number | null;
-    buildingAgeYears: number | null;
     floorAreaSqm: number | null;
     landAreaSqm: number | null;
+    privateRoadAreaSqm: number | null;
+    layout: string | null;
+    floors: string | null;
+    unitCount: number | null;
+    totalUnits: number | null;
+    parking: string | null;
+    buildingCoveragePercent: number | null;
+    floorAreaRatioPercent: number | null;
+    roadAccess: string | null;
+    landCategory: string | null;
+    cityPlanningArea: string | null;
+    zoning: string | null;
+    nationalLandReport: string | null;
+    currentStatus: string | null;
+    handoverDate: string | null;
+    buildingConfirmationNumber: string | null;
+    managementNumber: string | null;
+    nextUpdateDate: string | null;
+    infoRegisteredDate: string | null;
+    notes: string | null;
     imageUrl: string | null;
   };
   warnings?: string[];
@@ -76,6 +98,7 @@ const IMPORT_FIELDS: FieldConfig[] = [
   { key: "yieldPercent", label: "表面利回り", type: "percent", unit: "%"},
   { key: "structure", label: "構造", type: "structure", mapTo: "structure", required: true },
   { key: "buildingAgeYears", label: "築年数", type: "number", unit: "年", mapTo: "buildingAge", required: true },
+  { key: "unitCount", label: "戸数", type: "number", unit: "戸", mapTo: "unitCount" },
   { key: "propertyType", label: "物件種別", type: "text" },
   { key: "address", label: "所在地", type: "text" },
   { key: "floorAreaSqm", label: "延床面積", type: "number", unit: "㎡" },
@@ -342,6 +365,14 @@ export const RakumachiImporter = ({
             placeholder="楽待の物件URLを貼り付け"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (!loading) {
+                  handleAnalyze();
+                }
+              }
+            }}
           />
           <button
             type="button"

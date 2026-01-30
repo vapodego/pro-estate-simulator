@@ -32,11 +32,12 @@ export async function POST(request: Request) {
         : "なし";
 
     const prompt = `
-あなたは不動産投資のアドバイザーです。日本語で簡潔に回答してください。
+あなたは不動産投資のアドバイザーです。日本語で回答してください。
 以下のサマリーに基づいて回答します。
 
 【回答ルール】
-- 初回コメントは3〜5行で要点だけ（強み/リスク/次の一手）
+- 形式の指定はありません。自由に書いてください。
+- Markdownでの記述を許可します（箇条書きや見出しOK）。
 - 会話履歴がある場合は「最後のユーザー質問」に答える
 - 数値は推定である旨は不要、断定しすぎない
 
@@ -54,7 +55,7 @@ ${conversationText}
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.4 },
+          generationConfig: { temperature: 0.7 },
         }),
       }
     );

@@ -73,6 +73,7 @@ export interface PropertyInput {
   acquisitionLandReductionRate: number; // 取得税の土地評価圧縮率（%）
 
   // 融資設定
+  equityRatio: number;       // 自己資金（%）
   loanAmount: number;         // 借入金額
   interestRate: number;       // 金利（%）
   loanDuration: number;       // 借入期間（年）
