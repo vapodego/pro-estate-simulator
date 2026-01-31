@@ -113,7 +113,12 @@ export const SimulationChart: React.FC<Props> = ({
                   formatter={(value: number) => formatTooltip(value)}
                   labelFormatter={(label) => `${label}年目`}
                 />
-                <Legend verticalAlign="top" height={28} />
+                <Legend
+                  verticalAlign="top"
+                  height={24}
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: 10 }}
+                />
                 <Line
                   type="monotone"
                   dataKey="income"

@@ -2407,6 +2407,9 @@ a {
 
 .chart-card {
   padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .chart-header {
@@ -2440,7 +2443,13 @@ a {
 }
 
 .chart-body {
-  height: 320px;
+  flex: 1;
+  min-height: 320px;
+  height: auto;
+}
+
+.chart-body.dscr-chart-body {
+  min-height: 220px;
 }
 
 .detail-card {
