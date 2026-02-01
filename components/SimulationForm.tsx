@@ -348,8 +348,6 @@ type ListingPreview = {
   access?: string | null;
   structure?: string | null;
   builtYearMonth?: string | null;
-  landRight?: string | null;
-  transactionType?: string | null;
   priceDisplay?: string | null;
   landRight?: string | null;
   transactionType?: string | null;
