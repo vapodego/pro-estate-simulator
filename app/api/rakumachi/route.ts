@@ -142,6 +142,22 @@ const REQUEST_HEADERS = {
   Origin: "https://www.rakumachi.jp",
 };
 
+const FETCH_TIMEOUT_MS = 20000;
+
+const fetchWithTimeout = async (
+  input: RequestInfo,
+  init: RequestInit = {},
+  timeoutMs = FETCH_TIMEOUT_MS
+) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const getSetCookies = (headers: Headers) => {
   const withGetter = headers as Headers & { getSetCookie?: () => string[] };
   if (typeof withGetter.getSetCookie === "function") {
@@ -162,7 +178,7 @@ const fetchViaScraperApi = async (targetUrl: URL, apiKey: string) => {
   scraperUrl.searchParams.set("api_key", apiKey);
   scraperUrl.searchParams.set("url", targetUrl.toString());
   scraperUrl.searchParams.set("premium", "true");
-  const response = await fetch(scraperUrl.toString(), {
+  const response = await fetchWithTimeout(scraperUrl.toString(), {
     headers: { "User-Agent": REQUEST_HEADERS["User-Agent"] },
     cache: "no-store",
   });
@@ -174,30 +190,45 @@ const fetchViaScraperApi = async (targetUrl: URL, apiKey: string) => {
 };
 
 const fetchListingHtml = async (targetUrl: URL) => {
-  const response = await fetch(targetUrl.toString(), {
-    headers: REQUEST_HEADERS,
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(targetUrl.toString(), {
+      headers: REQUEST_HEADERS,
+      cache: "no-store",
+    });
+  } catch {
+    return { html: null, status: 504 };
+  }
   if (response.ok) {
     const html = await response.text();
     return { html, status: response.status };
   }
 
   if (response.status === 403) {
-    const landingRes = await fetch("https://www.rakumachi.jp/", {
-      headers: REQUEST_HEADERS,
-      cache: "no-store",
-    });
-    const cookies = buildCookieHeader(getSetCookies(landingRes.headers));
-    if (cookies) {
-      const retryRes = await fetch(targetUrl.toString(), {
-        headers: {
-          ...REQUEST_HEADERS,
-          Cookie: cookies,
-        },
+    let landingRes: Response | null = null;
+    try {
+      landingRes = await fetchWithTimeout("https://www.rakumachi.jp/", {
+        headers: REQUEST_HEADERS,
         cache: "no-store",
       });
-      if (retryRes.ok) {
+    } catch {
+      landingRes = null;
+    }
+    const cookies = buildCookieHeader(getSetCookies(landingRes?.headers ?? new Headers()));
+    if (cookies) {
+      let retryRes: Response | null = null;
+      try {
+        retryRes = await fetchWithTimeout(targetUrl.toString(), {
+          headers: {
+            ...REQUEST_HEADERS,
+            Cookie: cookies,
+          },
+          cache: "no-store",
+        });
+      } catch {
+        retryRes = null;
+      }
+      if (retryRes?.ok) {
         const html = await retryRes.text();
         return { html, status: retryRes.status };
       }
@@ -217,11 +248,16 @@ const fetchListingHtml = async (targetUrl: URL) => {
       `https://r.jina.ai/http://${targetUrl.toString()}`,
     ];
     for (const proxyUrl of proxyCandidates) {
-      const proxyRes = await fetch(proxyUrl, {
-        headers: { "User-Agent": REQUEST_HEADERS["User-Agent"], Accept: "text/plain,*/*" },
-        cache: "no-store",
-      });
-      if (proxyRes.ok) {
+      let proxyRes: Response | null = null;
+      try {
+        proxyRes = await fetchWithTimeout(proxyUrl, {
+          headers: { "User-Agent": REQUEST_HEADERS["User-Agent"], Accept: "text/plain,*/*" },
+          cache: "no-store",
+        });
+      } catch {
+        proxyRes = null;
+      }
+      if (proxyRes?.ok) {
         const html = await proxyRes.text();
         if (/Target URL returned error/i.test(html)) {
           return { html: null, status: response.status };
