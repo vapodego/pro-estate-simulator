@@ -142,16 +142,51 @@ const REQUEST_HEADERS = {
   Origin: "https://www.rakumachi.jp",
 };
 
+const getSetCookies = (headers: Headers) => {
+  const withGetter = headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof withGetter.getSetCookie === "function") {
+    return withGetter.getSetCookie();
+  }
+  const raw = headers.get("set-cookie");
+  return raw ? [raw] : [];
+};
+
+const buildCookieHeader = (setCookies: string[]) =>
+  setCookies
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter((cookie) => Boolean(cookie))
+    .join("; ");
+
 const fetchListingHtml = async (targetUrl: URL) => {
   const response = await fetch(targetUrl.toString(), {
     headers: REQUEST_HEADERS,
     cache: "no-store",
   });
   if (response.ok) {
-    return { html: await response.text(), status: response.status };
+    const html = await response.text();
+    return { html, status: response.status };
   }
 
   if (response.status === 403) {
+    const landingRes = await fetch("https://www.rakumachi.jp/", {
+      headers: REQUEST_HEADERS,
+      cache: "no-store",
+    });
+    const cookies = buildCookieHeader(getSetCookies(landingRes.headers));
+    if (cookies) {
+      const retryRes = await fetch(targetUrl.toString(), {
+        headers: {
+          ...REQUEST_HEADERS,
+          Cookie: cookies,
+        },
+        cache: "no-store",
+      });
+      if (retryRes.ok) {
+        const html = await retryRes.text();
+        return { html, status: retryRes.status };
+      }
+    }
+
     const stripped = targetUrl.toString().replace(/^https?:\/\//, "");
     const proxyCandidates = [
       `https://r.jina.ai/http://${stripped}`,
@@ -163,7 +198,11 @@ const fetchListingHtml = async (targetUrl: URL) => {
         cache: "no-store",
       });
       if (proxyRes.ok) {
-        return { html: await proxyRes.text(), status: proxyRes.status };
+        const html = await proxyRes.text();
+        if (/Target URL returned error/i.test(html)) {
+          return { html: null, status: response.status };
+        }
+        return { html, status: proxyRes.status };
       }
     }
   }
