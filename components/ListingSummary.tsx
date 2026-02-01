@@ -7,6 +7,12 @@ type ListingSummaryProps = {
   listingUrl?: string | null;
 };
 
+type ListingFact = {
+  label: string;
+  value: string | null;
+  placeholder?: boolean;
+};
+
 const formatManYen = (value: number | null | undefined) => {
   if (value === null || value === undefined) return null;
   const man = Math.round((value / 10000) * 10) / 10;
@@ -80,7 +86,7 @@ export const ListingSummary = ({ listing, listingUrl }: ListingSummaryProps) => 
   const listingFarText = formatPercent(listing.floorAreaRatioPercent ?? null);
   const listingTitle = listing.propertyName ?? listing.title ?? null;
 
-  const listingFacts = [
+  const listingFacts: ListingFact[] = [
     { label: "物件名", value: listingTitle },
     { label: "所在地", value: listing.address ?? null },
     { label: "交通", value: listing.access ?? null },
