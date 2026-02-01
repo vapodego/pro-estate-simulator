@@ -157,6 +157,22 @@ const buildCookieHeader = (setCookies: string[]) =>
     .filter((cookie) => Boolean(cookie))
     .join("; ");
 
+const fetchViaScraperApi = async (targetUrl: URL, apiKey: string) => {
+  const scraperUrl = new URL("https://api.scraperapi.com/");
+  scraperUrl.searchParams.set("api_key", apiKey);
+  scraperUrl.searchParams.set("url", targetUrl.toString());
+  scraperUrl.searchParams.set("premium", "true");
+  const response = await fetch(scraperUrl.toString(), {
+    headers: { "User-Agent": REQUEST_HEADERS["User-Agent"] },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    return { html: null, status: response.status };
+  }
+  const html = await response.text();
+  return { html, status: response.status };
+};
+
 const fetchListingHtml = async (targetUrl: URL) => {
   const response = await fetch(targetUrl.toString(), {
     headers: REQUEST_HEADERS,
@@ -184,6 +200,14 @@ const fetchListingHtml = async (targetUrl: URL) => {
       if (retryRes.ok) {
         const html = await retryRes.text();
         return { html, status: retryRes.status };
+      }
+    }
+
+    const scraperApiKey = process.env.SCRAPER_API_KEY;
+    if (scraperApiKey) {
+      const scraperRes = await fetchViaScraperApi(targetUrl, scraperApiKey);
+      if (scraperRes.html) {
+        return scraperRes;
       }
     }
 

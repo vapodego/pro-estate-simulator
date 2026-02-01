@@ -15,3 +15,5 @@ env:
     value: "G-9R633TTL4K"
   - variable: GEMINI_API_KEY
     secret: geminiApiKey
+  - variable: SCRAPER_API_KEY
+    secret: scraperApiKey
