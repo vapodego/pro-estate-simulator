@@ -306,8 +306,8 @@ export const RakumachiImporter = ({
         const suggested = suggestedManuals[field.key as keyof typeof suggestedManuals];
         const fallback = manualDefaults[field.key as keyof typeof manualDefaults] ?? "";
         const nextValue =
-          suggested !== null && suggested !== undefined && suggested !== ""
-            ? formatDraftValue(field, suggested as number)
+          typeof suggested === "number" && Number.isFinite(suggested)
+            ? formatDraftValue(field, suggested)
             : fallback;
         nextDraft[field.key] = nextValue;
       });
