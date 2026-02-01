@@ -839,7 +839,7 @@ export default function Home() {
     if (selectedImport?.id !== pendingAiPromptId) return;
     setPendingAiPromptId(null);
     void askAi(
-      "この物件の全体的な評価をお願いします。また、立地や土地の価値、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
+      "この物件の全体的な評価をお願いします。また、立地や土地の価値（推定金額と土地の比率）、部屋のサイズや構成によるターゲット層、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
     );
   }, [pendingAiPromptId, selectedImport, aiLoading, askAi]);
 

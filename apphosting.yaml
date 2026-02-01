@@ -1,0 +1,17 @@
+env:
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: "AIzaSyAd3D8vN22itSkW-u-iJC6NlLG2qO_KrJc"
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: "pro-estate-simulator.firebaseapp.com"
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: "pro-estate-simulator"
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: "pro-estate-simulator.firebasestorage.app"
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "715542461650"
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:715542461650:web:c565cd47a0ae5407b2810b"
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: "G-9R633TTL4K"
+  - variable: GEMINI_API_KEY
+    secret: geminiApiKey
