@@ -133,6 +133,44 @@ const extractJson = (text: string) => {
   return text.slice(start, end + 1);
 };
 
+const REQUEST_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+  "Accept-Language": "ja,en;q=0.8",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  Referer: "https://www.rakumachi.jp/",
+  Origin: "https://www.rakumachi.jp",
+};
+
+const fetchListingHtml = async (targetUrl: URL) => {
+  const response = await fetch(targetUrl.toString(), {
+    headers: REQUEST_HEADERS,
+    cache: "no-store",
+  });
+  if (response.ok) {
+    return { html: await response.text(), status: response.status };
+  }
+
+  if (response.status === 403) {
+    const stripped = targetUrl.toString().replace(/^https?:\/\//, "");
+    const proxyCandidates = [
+      `https://r.jina.ai/http://${stripped}`,
+      `https://r.jina.ai/http://${targetUrl.toString()}`,
+    ];
+    for (const proxyUrl of proxyCandidates) {
+      const proxyRes = await fetch(proxyUrl, {
+        headers: { "User-Agent": REQUEST_HEADERS["User-Agent"], Accept: "text/plain,*/*" },
+        cache: "no-store",
+      });
+      if (proxyRes.ok) {
+        return { html: await proxyRes.text(), status: proxyRes.status };
+      }
+    }
+  }
+
+  return { html: null, status: response.status };
+};
+
 const STRUCTURE_LABELS: Record<string, string> = {
   RC: "RC造",
   SRC: "SRC造",
@@ -157,21 +195,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEYが未設定です。" }, { status: 500 });
     }
 
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
-        "Accept-Language": "ja,en;q=0.8",
-      },
-      cache: "no-store",
-    });
-    if (!res.ok) {
+    const { html, status } = await fetchListingHtml(targetUrl);
+    if (!html) {
       return NextResponse.json(
-        { error: `ページ取得に失敗しました。(${res.status})` },
+        { error: `ページ取得に失敗しました。(${status})` },
         { status: 502 }
       );
     }
-    const html = await res.text();
     const metaTitle = extractMeta(html, "og:title") || extractMeta(html, "twitter:title");
     const metaImage = extractMeta(html, "og:image") || extractMeta(html, "twitter:image");
     const titleTag = extractTitle(html);
