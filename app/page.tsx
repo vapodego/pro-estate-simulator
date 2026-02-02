@@ -98,7 +98,7 @@ const DEFAULT_INPUT: PropertyInput = {
   vacancyCycleMonths: 0,
   vacancyProbability: 0,
   vacancyProbabilityMonths: 0,
-  taxType: "INDIVIDUAL",
+  taxType: "CORPORATE",
   incomeTaxRate: 0,
   otherIncome: 0,
   corporateMinimumTax: 0,
@@ -737,6 +737,17 @@ export default function Home() {
     setHasCompletedSteps(false);
   };
 
+  const handleImportStart = () => {
+    setInputData(DEFAULT_INPUT);
+    setAutoFilledKeys([]);
+    setSelectedImportId(null);
+    setHasImportResult(false);
+    setHasViewedResults(false);
+    setHasCompletedSteps(false);
+    setSelectedYear(1);
+    setFormVersion((prev) => prev + 1);
+  };
+
   const handleImportResultChange = (hasResult: boolean) => {
     setHasImportResult(hasResult);
     if (!hasResult) {
@@ -839,7 +850,7 @@ export default function Home() {
     if (selectedImport?.id !== pendingAiPromptId) return;
     setPendingAiPromptId(null);
     void askAi(
-      "この物件の全体的な評価をお願いします。また、立地や土地の価値（推定金額と土地の比率）、部屋のサイズや構成によるターゲット層、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
+      "この物件の全体的な評価をお願いします。また、立地や土地の価値（推定金額と土地の比率）、積算価値、部屋のサイズや構成によるターゲット層、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
     );
   }, [pendingAiPromptId, selectedImport, aiLoading, askAi]);
 
@@ -2665,6 +2676,7 @@ export default function Home() {
               onSelectHistory={handleImportSelect}
               onClearHistory={handleImportClear}
               onResultChange={handleImportResultChange}
+              onStartAnalyze={handleImportStart}
             />
           </div>
 

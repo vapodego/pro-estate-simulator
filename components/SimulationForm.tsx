@@ -13,8 +13,8 @@ import { getSuggestedBuildingRatio } from "../utils/estimates";
 
 // 構造の選択肢定義
 const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
-  { label: "RC (鉄筋コンクリート)", value: "RC" },
-  { label: "SRC (鉄骨鉄筋コンクリート)", value: "SRC" },
+  { label: "RC", value: "RC" },
+  { label: "SRC", value: "SRC" },
   { label: "重量鉄骨 (厚)", value: "S_HEAVY" },
   { label: "軽量鉄骨 (薄)", value: "S_LIGHT" },
   { label: "木造", value: "WOOD" },
@@ -1886,176 +1886,6 @@ export const SimulationForm: React.FC<Props> = ({
                 <div className="form-input-right-col">
             <div className="form-section form-panel">
               <div className="form-panel-head">
-                <h3 className="form-section-title">初期費用設定（購入時）</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("initial")}
-                  aria-expanded={openPanels.initial}
-                >
-                  {openPanels.initial ? "▼ 閉じる" : "▶ 開く"}
-                </button>
-              </div>
-              {openPanels.initial ? (
-                <>
-                  <div className="form-grid three-col compact">
-                    <div>
-                      {renderLabel("水道分担金率 (%)", "waterContributionRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(waterContributionRate)}
-                        className={isAutoFilled("waterContributionRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("waterContributionRate", Number(e.target.value))}
-                      />
-                      {!isPristine && waterContribution > 0 ? (
-                        <p className="form-note">{(waterContribution / 10000).toLocaleString()} 万円</p>
-                      ) : null}
-                    </div>
-                    <div>
-                      {renderLabel("火災保険率 (%)", "fireInsuranceRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(fireInsuranceRate)}
-                        className={isAutoFilled("fireInsuranceRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("fireInsuranceRate", Number(e.target.value))}
-                      />
-                      {!isPristine && fireInsurance > 0 ? (
-                        <p className="form-note">{(fireInsurance / 10000).toLocaleString()} 万円</p>
-                      ) : null}
-                    </div>
-                    <div>
-                      {renderLabel("登記費用率 (%)", "registrationCostRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(registrationCostRate)}
-                        className={isAutoFilled("registrationCostRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("registrationCostRate", Number(e.target.value))}
-                      />
-                      {!isPristine && registrationCost > 0 ? (
-                        <p className="form-note">{(registrationCost / 10000).toLocaleString()} 万円</p>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="form-grid three-col compact">
-                    <div>
-                      {renderLabel("融資手数料率 (%)", "loanFeeRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(loanFeeRate)}
-                        className={isAutoFilled("loanFeeRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("loanFeeRate", Number(e.target.value))}
-                      />
-                      {!isPristine && loanFee > 0 ? (
-                        <p className="form-note">{(loanFee / 10000).toLocaleString()} 万円</p>
-                      ) : null}
-                    </div>
-                    <div>
-                      {renderLabel("その他諸費用率 (%)", "miscCostRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(miscCostRate)}
-                        className={isAutoFilled("miscCostRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("miscCostRate", Number(e.target.value))}
-                      />
-                      {!isPristine && miscCost > 0 ? (
-                        <p className="form-note">{(miscCost / 10000).toLocaleString()} 万円</p>
-                      ) : null}
-                    </div>
-                  </div>
-                  {!isPristine && estimatedTotal > 0 ? (
-                    <p className="form-note">
-                      初期費用合計: {(initialCostsTotal / 10000).toLocaleString()} 万円 / 購入総額:{" "}
-                      {(estimatedTotal / 10000).toLocaleString()} 万円
-                    </p>
-                  ) : null}
-                  <div className="form-grid two-col compact">
-                    <div>
-                      {renderLabel("不動産取得税率 (%)", "acquisitionTaxRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(acquisitionTaxRate)}
-                        className={isAutoFilled("acquisitionTaxRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("acquisitionTaxRate", Number(e.target.value))}
-                      />
-                    </div>
-                    <div>
-                      {renderLabel("土地評価圧縮率 (%)", "acquisitionLandReductionRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(acquisitionLandReductionRate)}
-                        className={isAutoFilled("acquisitionLandReductionRate") ? "auto-input" : undefined}
-                        onChange={(e) =>
-                          handleChange("acquisitionLandReductionRate", Number(e.target.value))
-                        }
-                      />
-                    </div>
-                  </div>
-                  {!isPristine && acquisitionTaxEstimate > 0 ? (
-                    <p className="form-note">
-                      不動産取得税（翌年計上）: {(acquisitionTaxEstimate / 10000).toLocaleString()} 万円
-                    </p>
-                  ) : null}
-                  <div className="form-divider" />
-                  <div className="form-subtitle">固定資産税・都市計画税パラメータ</div>
-                  <div className="form-grid two-col compact">
-                    <div>
-                      {renderLabel("土地評価率 (%)", "landEvaluationRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(landEvaluationRate)}
-                        className={isAutoFilled("landEvaluationRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("landEvaluationRate", Number(e.target.value))}
-                      />
-                    </div>
-                    <div>
-                      {renderLabel("建物評価率 (%)", "buildingEvaluationRate")}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={displayPercent(buildingEvaluationRate)}
-                        className={isAutoFilled("buildingEvaluationRate") ? "auto-input" : undefined}
-                        onChange={(e) =>
-                          handleChange("buildingEvaluationRate", Number(e.target.value))
-                        }
-                      />
-                    </div>
-                    <div>
-                      {renderLabel("住宅用地特例 (%)", "landTaxReductionRate")}
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={displayPercent(landTaxReductionRate)}
-                        className={isAutoFilled("landTaxReductionRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("landTaxReductionRate", Number(e.target.value))}
-                      />
-                      <p className="form-note">※1/6なら16.67%</p>
-                    </div>
-                    <div>
-                      {renderLabel("固定資産税・都市計画税率 (%)", "propertyTaxRate")}
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={displayPercent(propertyTaxRate)}
-                        className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                </>
-              ) : null}
-            </div>
-                </div>
-                <div className="form-input-right-col">
-            <div className="form-section form-panel">
-              <div className="form-panel-head">
                 <h3 className="form-section-title">修繕・空室設定</h3>
                 <button
                   type="button"
@@ -2068,7 +1898,7 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.repair ? (
                 <>
-                  <div className="form-grid two-col compact">
+                  <div className="form-grid two-col compact vacancy-grid">
                     <div>
                       {renderHelpLabel("空室モデル", "vacancyModel")}
                       <select
@@ -2560,6 +2390,176 @@ export const SimulationForm: React.FC<Props> = ({
                     </>
                   ) : null}
               </div>
+            </div>
+                </div>
+                <div className="form-input-right-col">
+            <div className="form-section form-panel">
+              <div className="form-panel-head">
+                <h3 className="form-section-title">初期費用設定（購入時）</h3>
+                <button
+                  type="button"
+                  className="section-toggle"
+                  onClick={() => togglePanel("initial")}
+                  aria-expanded={openPanels.initial}
+                >
+                  {openPanels.initial ? "▼ 閉じる" : "▶ 開く"}
+                </button>
+              </div>
+              {openPanels.initial ? (
+                <>
+                  <div className="form-grid three-col compact">
+                    <div>
+                      {renderLabel("水道分担金率 (%)", "waterContributionRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(waterContributionRate)}
+                        className={isAutoFilled("waterContributionRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("waterContributionRate", Number(e.target.value))}
+                      />
+                      {!isPristine && waterContribution > 0 ? (
+                        <p className="form-note">{(waterContribution / 10000).toLocaleString()} 万円</p>
+                      ) : null}
+                    </div>
+                    <div>
+                      {renderLabel("火災保険率 (%)", "fireInsuranceRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(fireInsuranceRate)}
+                        className={isAutoFilled("fireInsuranceRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("fireInsuranceRate", Number(e.target.value))}
+                      />
+                      {!isPristine && fireInsurance > 0 ? (
+                        <p className="form-note">{(fireInsurance / 10000).toLocaleString()} 万円</p>
+                      ) : null}
+                    </div>
+                    <div>
+                      {renderLabel("登記費用率 (%)", "registrationCostRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(registrationCostRate)}
+                        className={isAutoFilled("registrationCostRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("registrationCostRate", Number(e.target.value))}
+                      />
+                      {!isPristine && registrationCost > 0 ? (
+                        <p className="form-note">{(registrationCost / 10000).toLocaleString()} 万円</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="form-grid three-col compact">
+                    <div>
+                      {renderLabel("融資手数料率 (%)", "loanFeeRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(loanFeeRate)}
+                        className={isAutoFilled("loanFeeRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("loanFeeRate", Number(e.target.value))}
+                      />
+                      {!isPristine && loanFee > 0 ? (
+                        <p className="form-note">{(loanFee / 10000).toLocaleString()} 万円</p>
+                      ) : null}
+                    </div>
+                    <div>
+                      {renderLabel("その他諸費用率 (%)", "miscCostRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(miscCostRate)}
+                        className={isAutoFilled("miscCostRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("miscCostRate", Number(e.target.value))}
+                      />
+                      {!isPristine && miscCost > 0 ? (
+                        <p className="form-note">{(miscCost / 10000).toLocaleString()} 万円</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  {!isPristine && estimatedTotal > 0 ? (
+                    <p className="form-note">
+                      初期費用合計: {(initialCostsTotal / 10000).toLocaleString()} 万円 / 購入総額:{" "}
+                      {(estimatedTotal / 10000).toLocaleString()} 万円
+                    </p>
+                  ) : null}
+                  <div className="form-grid two-col compact">
+                    <div>
+                      {renderLabel("不動産取得税率 (%)", "acquisitionTaxRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(acquisitionTaxRate)}
+                        className={isAutoFilled("acquisitionTaxRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("acquisitionTaxRate", Number(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      {renderLabel("土地評価圧縮率 (%)", "acquisitionLandReductionRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(acquisitionLandReductionRate)}
+                        className={isAutoFilled("acquisitionLandReductionRate") ? "auto-input" : undefined}
+                        onChange={(e) =>
+                          handleChange("acquisitionLandReductionRate", Number(e.target.value))
+                        }
+                      />
+                    </div>
+                  </div>
+                  {!isPristine && acquisitionTaxEstimate > 0 ? (
+                    <p className="form-note">
+                      不動産取得税（翌年計上）: {(acquisitionTaxEstimate / 10000).toLocaleString()} 万円
+                    </p>
+                  ) : null}
+                  <div className="form-divider" />
+                  <div className="form-subtitle">固定資産税・都市計画税パラメータ</div>
+                  <div className="form-grid two-col compact">
+                    <div>
+                      {renderLabel("土地評価率 (%)", "landEvaluationRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(landEvaluationRate)}
+                        className={isAutoFilled("landEvaluationRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("landEvaluationRate", Number(e.target.value))}
+                      />
+                    </div>
+                    <div>
+                      {renderLabel("建物評価率 (%)", "buildingEvaluationRate")}
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={displayPercent(buildingEvaluationRate)}
+                        className={isAutoFilled("buildingEvaluationRate") ? "auto-input" : undefined}
+                        onChange={(e) =>
+                          handleChange("buildingEvaluationRate", Number(e.target.value))
+                        }
+                      />
+                    </div>
+                    <div>
+                      {renderLabel("住宅用地特例 (%)", "landTaxReductionRate")}
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={displayPercent(landTaxReductionRate)}
+                        className={isAutoFilled("landTaxReductionRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("landTaxReductionRate", Number(e.target.value))}
+                      />
+                      <p className="form-note">※1/6なら16.67%</p>
+                    </div>
+                    <div>
+                      {renderLabel("固定資産税・都市計画税率 (%)", "propertyTaxRate")}
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={displayPercent(propertyTaxRate)}
+                        className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
+                        onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
                 </div>
               </div>

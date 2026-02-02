@@ -847,7 +847,7 @@ a {
 .ai-messages {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 12px;
   padding-right: 4px;
 }
@@ -895,6 +895,9 @@ a {
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-message.user {
@@ -904,11 +907,13 @@ a {
 }
 
 .ai-response {
-  max-width: min(540px, 100%);
-  width: min(540px, 100%);
+  max-width: 100%;
+  width: 100%;
   font-size: 15px;
   line-height: 1.65;
   color: var(--ink-2);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-response p {
@@ -1037,11 +1042,12 @@ a {
 
 .form-input-layout {
   display: grid;
-  grid-template-columns: minmax(420px, 520px) minmax(960px, 1fr);
+  grid-template-columns: minmax(280px, 320px) auto;
   gap: 18px;
   align-items: start;
   width: max-content;
   max-width: none;
+  margin: 0 auto;
 }
 
 .form-input-left,
@@ -1049,32 +1055,39 @@ a {
   display: grid;
   gap: 16px;
   align-content: start;
+  min-width: 0;
 }
 
 .form-input-left {
-  min-width: 420px;
+  min-width: 280px;
+  max-width: 320px;
 }
 
 .form-input-right {
-  min-width: 960px;
+  width: max-content;
+  max-width: none;
 }
 
 .form-input-right-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(300px, 1fr));
+  grid-template-columns: repeat(3, minmax(320px, 340px));
   gap: 16px;
   align-items: start;
+  width: max-content;
+  max-width: none;
 }
 
 .form-input-right-col {
   display: grid;
   gap: 16px;
   align-content: start;
+  min-width: 0;
 }
 
 .form-input-left .form-section,
 .form-input-right .form-section {
   width: 100%;
+  min-width: 0;
 }
 
 /* Listing card is text-only now */
@@ -1088,6 +1101,8 @@ a {
 
 .form-panel {
   flex: 0 0 360px;
+  min-width: 0;
+  width: 100%;
 }
 
 .form-panel.oer-panel {
@@ -1233,6 +1248,11 @@ a {
 .form-grid {
   display: grid;
   gap: 12px;
+  min-width: 0;
+}
+
+.form-grid > div {
+  min-width: 0;
 }
 
 .form-grid.two-col {
@@ -1245,7 +1265,7 @@ a {
 
 .form-grid.compact {
   gap: 8px 12px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .form-grid.one-col {
@@ -1258,9 +1278,35 @@ a {
 
 .form-grid.compact > div {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr);
+  grid-template-columns: minmax(180px, 1.8fr) minmax(0, 100px);
   align-items: start;
   gap: 6px 10px;
+  min-width: 0;
+}
+
+.form-grid.compact > div > * {
+  min-width: 0;
+}
+
+.form-grid.compact input[type="number"],
+.form-grid.compact input[type="text"],
+.form-grid.compact select {
+  max-width: 100px;
+}
+
+.vacancy-grid > div {
+  grid-template-columns: minmax(210px, 2fr) minmax(0, 150px);
+}
+
+.vacancy-grid input[type="number"],
+.vacancy-grid select {
+  max-width: 150px;
+  width: 100%;
+}
+
+.form-grid:not(.oer-top-grid):not(.oer-leasing-grid) input[type="number"],
+.form-grid:not(.oer-top-grid):not(.oer-leasing-grid) select {
+  max-width: 100px;
 }
 
 .form-grid.compact > div > label,
@@ -1282,9 +1328,27 @@ a {
 .form-grid.oer-top-grid > div,
 .form-grid.two-col.oer-top-grid > div {
   display: grid;
-  grid-template-columns: 180px minmax(220px, 1fr);
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 160px);
   align-items: center;
   gap: 10px;
+}
+
+.form-input-left .form-grid.oer-top-grid > div,
+.form-input-left .form-grid.two-col.oer-top-grid > div {
+  grid-template-columns: minmax(170px, 1.8fr) minmax(0, 100px);
+}
+
+.form-input-left .form-grid.oer-top-grid input[type="number"],
+.form-input-left .form-grid.oer-top-grid select {
+  max-width: 100px;
+}
+
+.form-grid.oer-top-grid input[type="number"],
+.form-grid.oer-top-grid select,
+.form-grid.two-col.oer-top-grid input[type="number"],
+.form-grid.two-col.oer-top-grid select {
+  max-width: 160px;
+  width: 100%;
 }
 
 .form-grid.oer-top-grid > div > label,
@@ -1533,6 +1597,8 @@ a {
   background: #fffdf5;
   border-radius: 10px;
   padding: 10px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .oer-template-title {

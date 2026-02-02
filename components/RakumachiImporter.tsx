@@ -84,8 +84,8 @@ type FieldConfig = {
 };
 
 const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
-  { label: "RC (鉄筋コンクリート)", value: "RC" },
-  { label: "SRC (鉄骨鉄筋コンクリート)", value: "SRC" },
+  { label: "RC", value: "RC" },
+  { label: "SRC", value: "SRC" },
   { label: "重量鉄骨 (厚)", value: "S_HEAVY" },
   { label: "軽量鉄骨 (薄)", value: "S_LIGHT" },
   { label: "木造", value: "WOOD" },
@@ -177,6 +177,7 @@ type Props = {
   onSelectHistory?: (id: string) => void;
   onClearHistory?: () => void;
   onResultChange?: (hasResult: boolean) => void;
+  onStartAnalyze?: () => void;
 };
 
 export const RakumachiImporter = ({
@@ -187,6 +188,7 @@ export const RakumachiImporter = ({
   onSelectHistory,
   onClearHistory,
   onResultChange,
+  onStartAnalyze,
 }: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -265,8 +267,13 @@ export const RakumachiImporter = ({
       setError("URLを入力してください。");
       return;
     }
+    onStartAnalyze?.();
     setLoading(true);
     setError(null);
+    setResult(null);
+    setDraft({});
+    setCollapsed({ extracted: false, manual: false });
+    setShowDetails(false);
     try {
       const response = await fetch("/api/rakumachi", {
         method: "POST",
