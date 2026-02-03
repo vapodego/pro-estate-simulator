@@ -36,6 +36,7 @@ import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils
 import { PropertyInput, ScenarioConfig, YearlyResult } from "../utils/types";
 import {
   onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   signOut,
@@ -654,8 +655,22 @@ export default function Home() {
   const handleLogin = async () => {
     setAuthError(null);
     try {
-      await signInWithRedirect(auth, googleProvider);
+      await signInWithPopup(auth, googleProvider);
     } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request"
+      ) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectError) {
+          setAuthError(formatFirebaseError(redirectError, "ログインに失敗しました。"));
+          return;
+        }
+      }
       setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
     }
   };
