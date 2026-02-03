@@ -529,6 +529,7 @@ export default function Home() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiCollapsed, setAiCollapsed] = useState(false);
   const [aiCacheHit, setAiCacheHit] = useState(false);
+  const [authDebug, setAuthDebug] = useState<string[]>([]);
   const [pendingAiPromptId, setPendingAiPromptId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [activeKpiInfo, setActiveKpiInfo] = useState<KpiInfoKey | null>(null);
@@ -587,19 +588,45 @@ export default function Home() {
     });
   };
 
+  const pushAuthDebug = (message: string) => {
+    setAuthDebug((prev) => {
+      const next = [`${new Date().toLocaleTimeString()} ${message}`, ...prev];
+      return next.slice(0, 20);
+    });
+  };
+
   useEffect(() => {
+    pushAuthDebug(
+      `init origin=${typeof window === "undefined" ? "server" : window.location.origin}`
+    );
+    pushAuthDebug(
+      `authDomain=${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "unknown"}`
+    );
     const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
+      pushAuthDebug(`auth state user=${nextUser?.uid ?? "null"}`);
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!authReady) return;
-    getRedirectResult(auth).catch((error) => {
-      setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
-    });
+    pushAuthDebug("redirect result check");
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          pushAuthDebug(`redirect success user=${result.user.uid}`);
+        } else {
+          pushAuthDebug("redirect result empty");
+        }
+      })
+      .catch((error) => {
+        const code =
+          error && typeof error === "object" && "code" in error ? String(error.code) : "unknown";
+        pushAuthDebug(`redirect error code=${code}`);
+        setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
+      });
   }, [authReady]);
 
   useEffect(() => {
@@ -655,18 +682,27 @@ export default function Home() {
   const handleLogin = async () => {
     setAuthError(null);
     try {
+      pushAuthDebug("login start popup");
       await signInWithPopup(auth, googleProvider);
+      pushAuthDebug("popup success");
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      pushAuthDebug(`popup error code=${code}`);
       if (
         code === "auth/popup-blocked" ||
         code === "auth/popup-closed-by-user" ||
         code === "auth/cancelled-popup-request"
       ) {
         try {
+          pushAuthDebug("fallback redirect start");
           await signInWithRedirect(auth, googleProvider);
           return;
         } catch (redirectError) {
+          const redirectCode =
+            redirectError && typeof redirectError === "object" && "code" in redirectError
+              ? String(redirectError.code)
+              : "unknown";
+          pushAuthDebug(`redirect error code=${redirectCode}`);
           setAuthError(formatFirebaseError(redirectError, "ログインに失敗しました。"));
           return;
         }
@@ -2812,6 +2848,10 @@ export default function Home() {
                       </>
                     )}
                     {authError ? <div className="auth-error">{authError}</div> : null}
+                    <details className="auth-debug">
+                      <summary>認証ログ</summary>
+                      <pre>{authDebug.join("\n")}</pre>
+                    </details>
                   </div>
                 </div>
               ) : null}

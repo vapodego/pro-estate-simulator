@@ -1979,6 +1979,28 @@ a {
   color: var(--warn);
 }
 
+.auth-debug {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.auth-debug summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.auth-debug pre {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f5f2eb;
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .save-row {
   display: flex;
   gap: 8px;
