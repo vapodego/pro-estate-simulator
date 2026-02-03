@@ -29,7 +29,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { SimulationForm } from "../components/SimulationForm";
 import { SimulationChart } from "../components/SimulationChart";
-import { DscrChart } from "../components/DscrChart";
 import { RakumachiImporter, ImportHistoryItem } from "../components/RakumachiImporter";
 import { ListingSummary } from "../components/ListingSummary";
 import { calculateNPV, calculateIRR } from "../utils/finance";
@@ -45,10 +44,14 @@ import type { FirebaseError } from "firebase/app";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "../utils/firebase";
@@ -136,12 +139,21 @@ const DEFAULT_RIGHT_ORDER = [
   "charts",
   "cashflow",
   "simulation",
-  "exit",
-  "deadcross",
-  "scenario",
   "repayment",
-  "dscr",
+  "exit",
+  "scenario",
 ];
+
+const normalizeUrl = (url: string) => url.trim();
+
+const hashUrl = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+};
 
 type TableRow = {
   label: string;
@@ -514,6 +526,7 @@ export default function Home() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiCollapsed, setAiCollapsed] = useState(false);
+  const [aiCacheHit, setAiCacheHit] = useState(false);
   const [pendingAiPromptId, setPendingAiPromptId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(1);
   const [activeKpiInfo, setActiveKpiInfo] = useState<KpiInfoKey | null>(null);
@@ -529,6 +542,8 @@ export default function Home() {
   const [leftOrder, setLeftOrder] = useState(DEFAULT_LEFT_ORDER);
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
+  const analysisRunIdRef = useRef<string | null>(null);
+  const analysisRunUrlRef = useRef<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const aiMessagesRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -545,7 +560,6 @@ export default function Home() {
     detail: true,
     exit: true,
     scenario: true,
-    dscrChart: true,
     breakdownPrice: true,
     breakdownInitial: true,
     breakdownTax: true,
@@ -688,12 +702,15 @@ export default function Home() {
     const { data, autoFilled } = applyEstimatedDefaultsWithMeta(merged);
     setInputData(data);
     setAutoFilledKeys(autoFilled);
-    if (payload.url) {
-      const id = payload.url;
+    const url = payload.url ? normalizeUrl(payload.url) : "";
+    setAiCacheHit(false);
+
+    if (url) {
+      const id = url;
       setImportHistory((prev) => {
         const nextItem: ImportHistoryItem = {
           id,
-          url: payload.url,
+          url,
           listing: payload.listing ?? null,
           input: data,
           autoFilled,
@@ -708,10 +725,48 @@ export default function Home() {
         return [nextItem, ...prev].slice(0, 5);
       });
       setSelectedImportId(id);
-      if (payload.listing) {
-        setPendingAiPromptId(id);
-      }
     }
+    void (async () => {
+      let cachedMessages: { role: "user" | "assistant"; content: string }[] = [];
+      if (url && user) {
+        const cached = await loadAnalysisCache(url);
+        const cachedRaw = cached?.aiMessages;
+        if (Array.isArray(cachedRaw)) {
+          cachedMessages = cachedRaw.filter(
+            (msg) =>
+              msg &&
+              typeof msg === "object" &&
+              typeof msg.role === "string" &&
+              typeof msg.content === "string"
+          ) as { role: "user" | "assistant"; content: string }[];
+        }
+      }
+
+      if (cachedMessages.length > 0) {
+        setAiMessages(cachedMessages);
+        setAiError(null);
+        setPendingAiPromptId(null);
+        setAiCacheHit(true);
+      } else if (payload.listing) {
+        setPendingAiPromptId(url);
+      }
+
+      if (url && user) {
+        analysisRunUrlRef.current = url;
+        analysisRunIdRef.current = await saveAnalysisRun({
+          url,
+          input: data,
+          listing: payload.listing ?? null,
+          aiMessages: cachedMessages,
+        });
+        void saveAnalysisCache({
+          url,
+          input: data,
+          listing: payload.listing ?? null,
+          aiMessages: cachedMessages,
+        });
+      }
+    })();
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -727,6 +782,31 @@ export default function Home() {
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
+    setAiError(null);
+    setAiCacheHit(false);
+    void (async () => {
+      if (!user || !item.url) {
+        setAiMessages([]);
+        return;
+      }
+      const cached = await loadAnalysisCache(item.url);
+      const cachedRaw = cached?.aiMessages;
+      if (Array.isArray(cachedRaw)) {
+        const cachedMessages = cachedRaw.filter(
+          (msg) =>
+            msg &&
+            typeof msg === "object" &&
+            typeof msg.role === "string" &&
+            typeof msg.content === "string"
+        ) as { role: "user" | "assistant"; content: string }[];
+        if (cachedMessages.length > 0) {
+          setAiMessages(cachedMessages);
+          setAiCacheHit(true);
+          return;
+        }
+      }
+      setAiMessages([]);
+    })();
     setFormVersion((prev) => prev + 1);
   };
 
@@ -745,7 +825,95 @@ export default function Home() {
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
+    setAiMessages([]);
+    setAiError(null);
+    setAiCacheHit(false);
+    analysisRunIdRef.current = null;
+    analysisRunUrlRef.current = null;
     setFormVersion((prev) => prev + 1);
+  };
+
+  const getCacheDocRef = (url: string) => {
+    if (!user) return null;
+    const id = `${user.uid}_${hashUrl(normalizeUrl(url))}`;
+    return doc(db, "analysisCache", id);
+  };
+
+  const loadAnalysisCache = async (url: string) => {
+    const ref = getCacheDocRef(url);
+    if (!ref) return null;
+    try {
+      const snap = await getDoc(ref);
+      return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+    } catch (error) {
+      console.warn("analysis cache read failed", error);
+      return null;
+    }
+  };
+
+  const handleImportCacheLookup = async (url: string) => {
+    if (!user) return null;
+    const cached = await loadAnalysisCache(url);
+    if (!cached || typeof cached !== "object") return null;
+    const input = cached.input && typeof cached.input === "object"
+      ? { ...DEFAULT_INPUT, ...(cached.input as Partial<PropertyInput>) }
+      : null;
+    if (!input) return null;
+    const listing =
+      cached.listing && typeof cached.listing === "object"
+        ? (cached.listing as ImportHistoryItem["listing"])
+        : null;
+    return { input, listing };
+  };
+
+  const saveAnalysisCache = async (params: {
+    url: string;
+    input: PropertyInput;
+    listing: ImportHistoryItem["listing"];
+    aiMessages: { role: "user" | "assistant"; content: string }[];
+  }) => {
+    const ref = getCacheDocRef(params.url);
+    if (!ref || !user) return;
+    try {
+      await setDoc(
+        ref,
+        {
+          userId: user.uid,
+          url: normalizeUrl(params.url),
+          input: params.input,
+          listing: params.listing ?? null,
+          aiMessages: params.aiMessages,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.warn("analysis cache write failed", error);
+    }
+  };
+
+  const saveAnalysisRun = async (params: {
+    url: string;
+    input: PropertyInput;
+    listing: ImportHistoryItem["listing"];
+    aiMessages: { role: "user" | "assistant"; content: string }[];
+  }) => {
+    if (!user) return null;
+    try {
+      const ref = await addDoc(collection(db, "analysisRuns"), {
+        userId: user.uid,
+        url: normalizeUrl(params.url),
+        input: params.input,
+        listing: params.listing ?? null,
+        aiMessages: params.aiMessages,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      return ref.id;
+    } catch (error) {
+      console.warn("analysis run write failed", error);
+      return null;
+    }
   };
 
   const handleImportResultChange = (hasResult: boolean) => {
@@ -805,6 +973,7 @@ export default function Home() {
   const askAi = async (question: string) => {
     const trimmed = question.trim();
     if (!trimmed || aiLoading) return;
+    setAiCacheHit(false);
     const nextMessages: { role: "user" | "assistant"; content: string }[] = [
       ...aiMessages,
       { role: "user", content: trimmed },
@@ -830,7 +999,25 @@ export default function Home() {
           ...limitedMessages,
           { role: "assistant", content: message },
         ];
-        setAiMessages(updatedMessages.slice(-10));
+        const finalMessages = updatedMessages.slice(-10);
+        setAiMessages(finalMessages);
+        const cacheUrl = selectedImport?.url;
+        if (cacheUrl && user) {
+          void saveAnalysisCache({
+            url: cacheUrl,
+            input: inputData,
+            listing: selectedImport?.listing ?? null,
+            aiMessages: finalMessages,
+          });
+          if (analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
+            void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
+              aiMessages: finalMessages,
+              updatedAt: serverTimestamp(),
+            }).catch((error) => {
+              console.warn("analysis run update failed", error);
+            });
+          }
+        }
       }
     } catch (error) {
       setAiError(error instanceof Error ? error.message : "AIの回答取得に失敗しました。");
@@ -1112,7 +1299,6 @@ export default function Home() {
       : null;
   const deadCrossYears = results.filter((result) => result.isDeadCross).map((result) => result.year);
   const firstDeadCrossYear = deadCrossYears.length > 0 ? deadCrossYears[0] : null;
-  const deadCrossCount = deadCrossYears.length;
   const summarizeScenario = (scenarioResults: YearlyResult[]) => {
     const totalCashFlow = scenarioResults.reduce(
       (sum, result) => sum + result.cashFlowPostTax,
@@ -2065,24 +2251,6 @@ export default function Home() {
         ) : null}
       </div>
     ),
-    deadcross: (
-      <div
-        className={`sheet-card alert-card ${
-          firstDeadCrossYear ? "alert-danger" : "alert-ok"
-        }`}
-      >
-        <div className="alert-title">デッドクロス警告</div>
-        <div className="alert-body">
-          {firstDeadCrossYear ? (
-            <>
-              {firstDeadCrossYear}年目からデッドクロスが発生しています。（該当年数: {deadCrossCount}年）
-            </>
-          ) : (
-            <>デッドクロスは確認されません。</>
-          )}
-        </div>
-      </div>
-    ),
     scenario: (
       <div className="sheet-card scenario-card">
         <div className="table-head">
@@ -2492,14 +2660,6 @@ export default function Home() {
         </div>
       </div>
     ),
-    dscr: (
-      <DscrChart
-        results={results}
-        comparisonResults={stressResults ?? undefined}
-        isOpen={openSections.dscrChart}
-        onToggle={() => toggleSection("dscrChart")}
-      />
-    ),
   };
 
   return (
@@ -2677,6 +2837,7 @@ export default function Home() {
               onClearHistory={handleImportClear}
               onResultChange={handleImportResultChange}
               onStartAnalyze={handleImportStart}
+              onCacheLookup={handleImportCacheLookup}
             />
           </div>
 
@@ -2762,6 +2923,7 @@ export default function Home() {
             <div className="ai-head">
               <h3 className="table-title">AIチャット</h3>
               <div className="ai-head-actions">
+                {aiCacheHit ? <span className="ai-cache-hit">キャッシュ</span> : null}
                 {aiLoading ? <span className="ai-status">生成中...</span> : null}
                 <button
                   type="button"

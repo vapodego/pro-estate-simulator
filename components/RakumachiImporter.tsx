@@ -178,6 +178,7 @@ type Props = {
   onClearHistory?: () => void;
   onResultChange?: (hasResult: boolean) => void;
   onStartAnalyze?: () => void;
+  onCacheLookup?: (url: string) => Promise<{ input: PropertyInput; listing: ListingPreview | null } | null>;
 };
 
 export const RakumachiImporter = ({
@@ -189,11 +190,13 @@ export const RakumachiImporter = ({
   onClearHistory,
   onResultChange,
   onStartAnalyze,
+  onCacheLookup,
 }: Props) => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
+  const [cacheHit, setCacheHit] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
@@ -271,10 +274,20 @@ export const RakumachiImporter = ({
     setLoading(true);
     setError(null);
     setResult(null);
+    setCacheHit(false);
     setDraft({});
     setCollapsed({ extracted: false, manual: false });
     setShowDetails(false);
     try {
+      if (onCacheLookup) {
+        const cached = await onCacheLookup(url.trim());
+        if (cached) {
+          setResult({ fields: {}, listing: cached.listing ?? null, warnings: ["cache"] });
+          setCacheHit(true);
+          onApply({ patch: cached.input, listing: cached.listing ?? null, url: url.trim() });
+          return;
+        }
+      }
       const response = await fetch("/api/rakumachi", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -425,7 +438,8 @@ export const RakumachiImporter = ({
           </div>
         ) : null}
         {error ? <div className="auth-error">{error}</div> : null}
-        {result ? <div className="form-note">解析結果を自動で反映しました。</div> : null}
+        {cacheHit ? <div className="form-note">キャッシュから復元しました。</div> : null}
+        {!cacheHit && result ? <div className="form-note">解析結果を自動で反映しました。</div> : null}
       </div>
     </div>
   );
