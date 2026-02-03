@@ -282,7 +282,7 @@ export const RakumachiImporter = ({
       if (onCacheLookup) {
         const cached = await onCacheLookup(url.trim());
         if (cached) {
-          setResult({ fields: {}, listing: cached.listing ?? null, warnings: ["cache"] });
+          setResult({ fields: {}, listing: cached.listing ?? undefined, warnings: ["cache"] });
           setCacheHit(true);
           onApply({ patch: cached.input, listing: cached.listing ?? null, url: url.trim() });
           return;
