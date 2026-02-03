@@ -2,7 +2,7 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     value: "AIzaSyAd3D8vN22itSkW-u-iJC6NlLG2qO_KrJc"
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    value: "pro-estate-simulator.firebaseapp.com"
+    value: "pro-estate-simulator.web.app"
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
     value: "pro-estate-simulator"
   - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
