@@ -36,7 +36,8 @@ import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils
 import { PropertyInput, ScenarioConfig, YearlyResult } from "../utils/types";
 import {
   onAuthStateChanged,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   type User,
 } from "firebase/auth";
@@ -594,6 +595,13 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
+    getRedirectResult(auth).catch((error) => {
+      setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
+    });
+  }, [authReady]);
+
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
       if (accountOpen && accountMenuRef.current && !accountMenuRef.current.contains(target)) {
@@ -646,7 +654,7 @@ export default function Home() {
   const handleLogin = async () => {
     setAuthError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      await signInWithRedirect(auth, googleProvider);
     } catch (error) {
       setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
     }
