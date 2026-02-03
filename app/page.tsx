@@ -602,6 +602,10 @@ export default function Home() {
     pushAuthDebug(
       `authDomain=${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "unknown"}`
     );
+    pushAuthDebug(`authDomain(config)=${auth.app.options.authDomain ?? "unknown"}`);
+    if (typeof navigator !== "undefined") {
+      pushAuthDebug(`ua=${navigator.userAgent}`);
+    }
     const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
@@ -681,8 +685,20 @@ export default function Home() {
 
   const handleLogin = async () => {
     setAuthError(null);
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       pushAuthDebug("login start popup");
+      fallbackTimer = setTimeout(() => {
+        pushAuthDebug("popup pending > 2.5s, fallback redirect");
+        signInWithRedirect(auth, googleProvider).catch((redirectError) => {
+          const redirectCode =
+            redirectError && typeof redirectError === "object" && "code" in redirectError
+              ? String(redirectError.code)
+              : "unknown";
+          pushAuthDebug(`redirect error code=${redirectCode}`);
+          setAuthError(formatFirebaseError(redirectError, "ログインに失敗しました。"));
+        });
+      }, 2500);
       await signInWithPopup(auth, googleProvider);
       pushAuthDebug("popup success");
     } catch (error) {
@@ -708,6 +724,10 @@ export default function Home() {
         }
       }
       setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
+    } finally {
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+      }
     }
   };
 
@@ -1096,7 +1116,7 @@ export default function Home() {
     if (selectedImport?.id !== pendingAiPromptId) return;
     setPendingAiPromptId(null);
     void askAi(
-      "この物件の全体的な評価をお願いします。また、立地や土地の価値（推定金額と土地の比率）、積算価値、部屋のサイズや構成によるターゲット層、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。"
+      "この物件の全体的な評価をお願いします。また、立地や土地の価値（推定金額と土地の比率）、積算価値、部屋のサイズや構成によるターゲット層、周辺相場と比べた家賃想定や表面利回りの妥当性も教えてください。良い買い物とするための交渉や交渉を教えてください。"
     );
   }, [pendingAiPromptId, selectedImport, aiLoading, askAi]);
 
