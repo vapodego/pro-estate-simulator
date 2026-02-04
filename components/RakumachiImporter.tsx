@@ -221,6 +221,15 @@ export const RakumachiImporter = ({
     });
   };
 
+  const removeImage = (id: string) => {
+    setImageFiles((prev) => {
+      const next = prev.filter(
+        (file) => `${file.name}-${file.size}-${file.lastModified}` !== id
+      );
+      return next;
+    });
+  };
+
   useEffect(() => {
     const nextPreviews = imageFiles.map((file) => ({
       id: `${file.name}-${file.size}-${file.lastModified}`,
@@ -256,7 +265,6 @@ export const RakumachiImporter = ({
     const hashes = await Promise.all(files.map(hashFile));
     return `image:${hashes.join("-")}`;
   };
-
 
   const manualDefaults = useMemo(() => {
     const toDefault = (value: number, scale = 1) =>
@@ -312,6 +320,9 @@ export const RakumachiImporter = ({
     if (!url.trim()) {
       setError("URLを入力してください。");
       return;
+    }
+    if (imageFiles.length > 0) {
+      setImageFiles([]);
     }
     onStartAnalyze?.();
     setLoading(true);
@@ -436,6 +447,7 @@ export const RakumachiImporter = ({
           setResult({ fields: {}, listing: cached.listing ?? undefined, warnings: ["cache"] });
           setCacheHit(true);
           onApply({ patch: cached.input, listing: cached.listing ?? null, url: cacheKey });
+          setImageFiles([]);
           return;
         }
       }
@@ -520,11 +532,20 @@ export const RakumachiImporter = ({
       if (Object.keys(patch).length > 0) {
         onApply({ patch, listing: data.listing ?? null, url: cacheKey });
       }
+      setImageFiles([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "解析に失敗しました。");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleUnifiedAnalyze = async () => {
+    if (imageFiles.length > 0) {
+      await handleImageAnalyze();
+      return;
+    }
+    await handleAnalyze();
   };
 
   const handleDraftChange = (key: string, value: string) => {
@@ -579,35 +600,17 @@ export const RakumachiImporter = ({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                if (!loading) {
-                  handleAnalyze();
-                }
+                if (!loading) handleUnifiedAnalyze();
               }
             }}
           />
           <button
             type="button"
             className="section-toggle"
-            onClick={handleAnalyze}
-            disabled={loading}
+            onClick={handleUnifiedAnalyze}
+            disabled={loading || (!url.trim() && imageFiles.length === 0)}
           >
             {loading ? "解析中..." : "解析"}
-          </button>
-        </div>
-        <div className="import-row">
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(e) => appendImageFiles(Array.from(e.target.files ?? []))}
-          />
-          <button
-            type="button"
-            className="section-toggle"
-            onClick={handleImageAnalyze}
-            disabled={loading || imageFiles.length === 0}
-          >
-            {loading ? "解析中..." : "画像解析"}
           </button>
         </div>
         <div
@@ -615,6 +618,17 @@ export const RakumachiImporter = ({
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (!loading && (imageFiles.length > 0 || url.trim())) {
+                handleUnifiedAnalyze();
+              }
+            }
+          }}
+          tabIndex={0}
+          role="button"
+          aria-label="スクショをドロップして解析"
         >
           <div className="import-drop-title">スクショをここにドロップ</div>
           <div className="import-drop-note">または Cmd+V / Ctrl+V で貼り付け</div>
@@ -627,11 +641,18 @@ export const RakumachiImporter = ({
             {imagePreviews.map((item) => (
               <div key={item.id} className="import-thumb" title={item.name}>
                 <img src={item.url} alt={item.name} />
+                <button
+                  type="button"
+                  className="import-thumb-remove"
+                  onClick={() => removeImage(item.id)}
+                  aria-label={`${item.name} を削除`}
+                >
+                  ×
+                </button>
               </div>
             ))}
           </div>
         ) : null}
-        <div className="form-note">ここにスクショを貼り付け（Cmd+V / Ctrl+V）もできます。</div>
         {history.length > 0 ? (
           <div className="import-history-row">
             <div className="import-history">
