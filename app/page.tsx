@@ -685,20 +685,8 @@ export default function Home() {
 
   const handleLogin = async () => {
     setAuthError(null);
-    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       pushAuthDebug("login start popup");
-      fallbackTimer = setTimeout(() => {
-        pushAuthDebug("popup pending > 2.5s, fallback redirect");
-        signInWithRedirect(auth, googleProvider).catch((redirectError) => {
-          const redirectCode =
-            redirectError && typeof redirectError === "object" && "code" in redirectError
-              ? String(redirectError.code)
-              : "unknown";
-          pushAuthDebug(`redirect error code=${redirectCode}`);
-          setAuthError(formatFirebaseError(redirectError, "ログインに失敗しました。"));
-        });
-      }, 2500);
       await signInWithPopup(auth, googleProvider);
       pushAuthDebug("popup success");
     } catch (error) {
@@ -724,10 +712,6 @@ export default function Home() {
         }
       }
       setAuthError(formatFirebaseError(error, "ログインに失敗しました。"));
-    } finally {
-      if (fallbackTimer) {
-        clearTimeout(fallbackTimer);
-      }
     }
   };
 
