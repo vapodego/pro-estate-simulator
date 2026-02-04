@@ -459,6 +459,55 @@ a {
   font-size: 11px;
 }
 
+.import-drop-zone {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+  background: #fbf8f0;
+  color: var(--ink-2);
+}
+
+.import-drop-zone.is-dragging {
+  border-color: #f59e0b;
+  background: #fff3d6;
+}
+
+.import-drop-title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.import-drop-note {
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+
+.import-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.import-thumb {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+}
+
+.import-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .import-history {
   display: flex;
   gap: 8px;

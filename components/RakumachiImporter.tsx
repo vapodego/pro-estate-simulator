@@ -199,6 +199,8 @@ export const RakumachiImporter = ({
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [cacheHit, setCacheHit] = useState(false);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<{ id: string; url: string; name: string }[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
@@ -218,6 +220,18 @@ export const RakumachiImporter = ({
       return next;
     });
   };
+
+  useEffect(() => {
+    const nextPreviews = imageFiles.map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}`,
+      url: URL.createObjectURL(file),
+      name: file.name,
+    }));
+    setImagePreviews(nextPreviews);
+    return () => {
+      nextPreviews.forEach((item) => URL.revokeObjectURL(item.url));
+    };
+  }, [imageFiles]);
 
   useEffect(() => {
     if (!selectedHistoryId) return;
@@ -535,6 +549,24 @@ export const RakumachiImporter = ({
     appendImageFiles(pastedFiles);
   };
 
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
+      file.type.startsWith("image/")
+    );
+    appendImageFiles(files);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
   return (
     <div className="sheet-card import-card" onPaste={handlePaste}>
       <div className="import-body compact">
@@ -578,8 +610,26 @@ export const RakumachiImporter = ({
             {loading ? "解析中..." : "画像解析"}
           </button>
         </div>
+        <div
+          className={`import-drop-zone${isDragging ? " is-dragging" : ""}`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <div className="import-drop-title">スクショをここにドロップ</div>
+          <div className="import-drop-note">または Cmd+V / Ctrl+V で貼り付け</div>
+        </div>
         {imageFiles.length > 0 ? (
           <div className="form-note">画像 {imageFiles.length}枚を解析します。</div>
+        ) : null}
+        {imagePreviews.length > 0 ? (
+          <div className="import-thumbs">
+            {imagePreviews.map((item) => (
+              <div key={item.id} className="import-thumb" title={item.name}>
+                <img src={item.url} alt={item.name} />
+              </div>
+            ))}
+          </div>
         ) : null}
         <div className="form-note">ここにスクショを貼り付け（Cmd+V / Ctrl+V）もできます。</div>
         {history.length > 0 ? (
