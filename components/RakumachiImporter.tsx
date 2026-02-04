@@ -197,6 +197,7 @@ export const RakumachiImporter = ({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [cacheHit, setCacheHit] = useState(false);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
@@ -209,10 +210,26 @@ export const RakumachiImporter = ({
   useEffect(() => {
     if (!selectedHistoryId) return;
     const item = history.find((entry) => entry.id === selectedHistoryId);
-    if (item?.url) {
+    if (item?.url && /^https?:/i.test(item.url)) {
       setUrl(item.url);
     }
   }, [history, selectedHistoryId]);
+
+  const hashFile = async (file: File) => {
+    const buffer = await file.arrayBuffer();
+    if (typeof crypto === "undefined" || !crypto.subtle) {
+      return `${file.name}-${file.size}-${file.lastModified}`;
+    }
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  };
+
+  const buildImageCacheKey = async (files: File[]) => {
+    const hashes = await Promise.all(files.map(hashFile));
+    return `image:${hashes.join("-")}`;
+  };
 
 
   const manualDefaults = useMemo(() => {
@@ -372,6 +389,118 @@ export const RakumachiImporter = ({
     }
   };
 
+  const handleImageAnalyze = async () => {
+    if (imageFiles.length === 0) {
+      setError("画像を追加してください。");
+      return;
+    }
+    onStartAnalyze?.();
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setCacheHit(false);
+    setDraft({});
+    setCollapsed({ extracted: false, manual: false });
+    setShowDetails(false);
+    try {
+      const cacheKey = await buildImageCacheKey(imageFiles);
+      if (onCacheLookup) {
+        const cached = await onCacheLookup(cacheKey);
+        if (cached) {
+          setResult({ fields: {}, listing: cached.listing ?? undefined, warnings: ["cache"] });
+          setCacheHit(true);
+          onApply({ patch: cached.input, listing: cached.listing ?? null, url: cacheKey });
+          return;
+        }
+      }
+
+      const formData = new FormData();
+      imageFiles.forEach((file) => {
+        formData.append("images", file);
+      });
+      const response = await fetch("/api/listing-image", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const details = body?.details ? ` (${body.details})` : "";
+        throw new Error(`${body?.error ?? "解析に失敗しました。"}${details}`);
+      }
+      const data = (await response.json()) as ImportResponse;
+      const normalized = normalizeFields(data.fields ?? {});
+      const nextDraft: Record<string, string> = {};
+      const suggestedManuals = getSuggestedManuals(normalized);
+      const formatDraftValue = (field: FieldConfig, value: number | string | null | undefined) => {
+        if (value === null || value === undefined || value === "") return "";
+        if (field.type === "yen") {
+          return (Number(value) / 10000).toString();
+        }
+        return String(value);
+      };
+      IMPORT_FIELDS.forEach((field) => {
+        const value = normalized[field.key]?.value;
+        if (value === null || value === undefined || value === "") {
+          nextDraft[field.key] = "";
+          return;
+        }
+        if (field.type === "yen") {
+          nextDraft[field.key] = (Number(value) / 10000).toString();
+        } else {
+          nextDraft[field.key] = String(value);
+        }
+      });
+      MANUAL_FIELDS.forEach((field) => {
+        if (field.key in nextDraft) return;
+        const suggested = suggestedManuals[field.key as keyof typeof suggestedManuals];
+        const fallback = manualDefaults[field.key as keyof typeof manualDefaults] ?? "";
+        const nextValue =
+          typeof suggested === "number" && Number.isFinite(suggested)
+            ? formatDraftValue(field, suggested)
+            : fallback;
+        nextDraft[field.key] = nextValue;
+      });
+      const patch: Partial<PropertyInput> = {};
+      const getValue = (field: FieldConfig) => {
+        const raw = nextDraft[field.key];
+        if (!raw) return null;
+        if (field.type === "structure") return raw as StructureType;
+        const numeric = toNumber(raw);
+        if (numeric === null) return null;
+        if (field.type === "yen") return Math.round(numeric * 10000);
+        return numeric;
+      };
+
+      IMPORT_FIELDS.forEach((field) => {
+        if (!field.mapTo) return;
+        const value = getValue(field);
+        if (value !== null) {
+          patch[field.mapTo] = value as never;
+        }
+      });
+
+      MANUAL_FIELDS.forEach((field) => {
+        if (!field.mapTo) return;
+        const value = getValue(field);
+        if (value !== null) {
+          patch[field.mapTo] = value as never;
+        }
+      });
+
+      setResult({ ...data, fields: normalized });
+      setDraft(nextDraft);
+      setCollapsed({ extracted: true, manual: true });
+      setShowDetails(false);
+      if (Object.keys(patch).length > 0) {
+        onApply({ patch, listing: data.listing ?? null, url: cacheKey });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解析に失敗しました。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDraftChange = (key: string, value: string) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
@@ -403,6 +532,25 @@ export const RakumachiImporter = ({
             {loading ? "解析中..." : "解析"}
           </button>
         </div>
+        <div className="import-row">
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => setImageFiles(Array.from(e.target.files ?? []))}
+          />
+          <button
+            type="button"
+            className="section-toggle"
+            onClick={handleImageAnalyze}
+            disabled={loading || imageFiles.length === 0}
+          >
+            {loading ? "解析中..." : "画像解析"}
+          </button>
+        </div>
+        {imageFiles.length > 0 ? (
+          <div className="form-note">画像 {imageFiles.length}枚を解析します。</div>
+        ) : null}
         {history.length > 0 ? (
           <div className="import-history-row">
             <div className="import-history">

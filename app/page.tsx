@@ -2917,7 +2917,11 @@ export default function Home() {
               <div className="listing-section step-zone">
                 <ListingSummary
                   listing={selectedImport.listing}
-                  listingUrl={selectedImport.url}
+                  listingUrl={
+                    selectedImport.url && /^https?:/i.test(selectedImport.url)
+                      ? selectedImport.url
+                      : null
+                  }
                 />
               </div>
             </>

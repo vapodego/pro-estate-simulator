@@ -454,6 +454,11 @@ a {
   font-family: var(--font-body), sans-serif;
 }
 
+.import-row input[type="file"] {
+  flex: 1;
+  font-size: 11px;
+}
+
 .import-history {
   display: flex;
   gap: 8px;
