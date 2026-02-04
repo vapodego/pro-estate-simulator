@@ -192,6 +192,7 @@ export const RakumachiImporter = ({
   onStartAnalyze,
   onCacheLookup,
 }: Props) => {
+  const IMAGE_LIMIT = 6;
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -206,6 +207,17 @@ export const RakumachiImporter = ({
       selectedHistoryId ? history.find((item) => item.id === selectedHistoryId) ?? null : null,
     [history, selectedHistoryId]
   );
+
+  const appendImageFiles = (files: File[]) => {
+    if (!files.length) return;
+    setImageFiles((prev) => {
+      const next = [...prev, ...files].slice(0, IMAGE_LIMIT);
+      if (next.length < prev.length + files.length) {
+        setError(`画像は最大${IMAGE_LIMIT}枚までです。`);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!selectedHistoryId) return;
@@ -505,8 +517,26 @@ export const RakumachiImporter = ({
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.isContentEditable) return;
+    if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const pastedFiles: File[] = [];
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) pastedFiles.push(file);
+      }
+    }
+    if (pastedFiles.length === 0) return;
+    event.preventDefault();
+    appendImageFiles(pastedFiles);
+  };
+
   return (
-    <div className="sheet-card import-card">
+    <div className="sheet-card import-card" onPaste={handlePaste}>
       <div className="import-body compact">
         <div className="import-row">
           <input
@@ -537,7 +567,7 @@ export const RakumachiImporter = ({
             type="file"
             accept="image/*"
             multiple
-            onChange={(e) => setImageFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => appendImageFiles(Array.from(e.target.files ?? []))}
           />
           <button
             type="button"
@@ -551,6 +581,7 @@ export const RakumachiImporter = ({
         {imageFiles.length > 0 ? (
           <div className="form-note">画像 {imageFiles.length}枚を解析します。</div>
         ) : null}
+        <div className="form-note">ここにスクショを貼り付け（Cmd+V / Ctrl+V）もできます。</div>
         {history.length > 0 ? (
           <div className="import-history-row">
             <div className="import-history">
