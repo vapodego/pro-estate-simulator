@@ -8,8 +8,12 @@ import {
   OerRateItem,
   OerFixedItem,
   OerEventItem,
+  OerAgeBand,
+  OerPropertyType,
 } from "../utils/types";
 import { getSuggestedBuildingRatio } from "../utils/estimates";
+import { OER_AGE_BANDS, getOerRateForAge } from "../utils/oer";
+import { getOccupancyRateForAge } from "../utils/occupancy";
 
 // 構造の選択肢定義
 const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
@@ -20,47 +24,6 @@ const STRUCTURE_OPTIONS: { label: string; value: StructureType }[] = [
   { label: "木造", value: "WOOD" },
 ];
 
-type OerPropertyType = "UNIT" | "WOOD_APARTMENT" | "STEEL_APARTMENT" | "RC_APARTMENT";
-type OerAgeBand = "NEW" | "MID" | "OLD";
-
-const OER_PROPERTY_OPTIONS: { label: string; value: OerPropertyType }[] = [
-  { label: "区分マンション", value: "UNIT" },
-  { label: "一棟アパート(木造)", value: "WOOD_APARTMENT" },
-  { label: "一棟アパート(鉄骨)", value: "STEEL_APARTMENT" },
-  { label: "一棟マンション(RC)", value: "RC_APARTMENT" },
-];
-
-const OER_AGE_BANDS: { label: string; value: OerAgeBand; maxAge: number }[] = [
-  { label: "築浅(〜10年)", value: "NEW", maxAge: 10 },
-  { label: "築10〜20年", value: "MID", maxAge: 20 },
-  { label: "築20年以上", value: "OLD", maxAge: Number.POSITIVE_INFINITY },
-];
-
-const OER_TEMPLATES: Record<OerPropertyType, Record<OerAgeBand, { exclTax: number; inclTax: number }>> = {
-  UNIT: {
-    NEW: { exclTax: 16, inclTax: 24 },
-    MID: { exclTax: 18, inclTax: 28 },
-    OLD: { exclTax: 22, inclTax: 32 },
-  },
-  WOOD_APARTMENT: {
-    NEW: { exclTax: 11, inclTax: 15 },
-    MID: { exclTax: 16, inclTax: 21 },
-    OLD: { exclTax: 24, inclTax: 29 },
-  },
-  STEEL_APARTMENT: {
-    NEW: { exclTax: 14, inclTax: 19 },
-    MID: { exclTax: 20, inclTax: 26 },
-    OLD: { exclTax: 26, inclTax: 32 },
-  },
-  RC_APARTMENT: {
-    NEW: { exclTax: 15, inclTax: 20 },
-    MID: { exclTax: 21, inclTax: 26 },
-    OLD: { exclTax: 29, inclTax: 34 },
-  },
-};
-
-const OER_AD_BONUS = 5;
-const OER_REPAIR_BONUS = 5;
 const OER_BUFFER_BONUS = 5;
 const OER_REPAIR_RATE: Record<OerAgeBand, number> = {
   NEW: 2,
@@ -146,7 +109,32 @@ const INPUT_HELP: Record<string, InputHelp> = {
   occupancyRate: {
     title: "入居率（%）",
     body:
-      "説明：満室賃料に掛ける稼働率です（例：95%）。\n結果への影響：賃料収入が比例して変動し、CFに直結します。\nコツ：新築でも常に100%ではない前提で、95〜98%などで試算すると現実的です。",
+      "説明：満室賃料に掛ける稼働率です（例：95%）。\n結果への影響：賃料収入が比例して変動し、CFに直結します。\nコツ：新築でも常に100%ではない前提で、95〜98%などで試算すると現実的です。詳細モードON時は、築年数に応じた複数の入居率を使用します。",
+  },
+  occupancyDetailEnabled: {
+    title: "入居率 詳細モード",
+    body:
+      "説明：築年数のレンジごとに入居率を設定できます。\n結果への影響：経過年数に応じた入居率の変化が反映されます。",
+  },
+  occupancyRateYear1to2: {
+    title: "入居率（1〜2年目）",
+    body: "築年数1〜2年目に適用する入居率（%）です。",
+  },
+  occupancyRateYear3to10: {
+    title: "入居率（3〜10年目）",
+    body: "築年数3〜10年目に適用する入居率（%）です。",
+  },
+  occupancyRateYear11to20: {
+    title: "入居率（11〜20年目）",
+    body: "築年数11〜20年目に適用する入居率（%）です。",
+  },
+  occupancyRateYear20to30: {
+    title: "入居率（20〜30年目）",
+    body: "築年数20〜30年目に適用する入居率（%）です。",
+  },
+  occupancyRateYear30to40: {
+    title: "入居率（30〜40年目）",
+    body: "築年数30〜40年目に適用する入居率（%）です。",
   },
   unitCount: {
     title: "戸数",
@@ -161,22 +149,12 @@ const INPUT_HELP: Record<string, InputHelp> = {
   operatingExpenseRate: {
     title: "運営経費率（%）",
     body:
-      "説明：家賃収入に対する運営費の割合です。\n結果への影響：NOI＝収入−運営費なので、CFに直結します。\nコツ：管理費・税・保険・清掃・修繕を含む前提で入力します。",
+      "説明：家賃収入に対する運営費の割合です。運営経費率は「物件タイプ×築年数」をベースに線形で自動推定し、毎年の経過年数に応じて徐々に上昇する前提でシミュレーションしています（詳細モードOFF時）。\n結果への影響：NOI＝収入−運営費なので、CFに直結します。\nコツ：実績値がある場合は数値を上書きし、詳細モードONで内訳入力に切り替えられます。",
   },
   oerMode: {
     title: "入力方式（簡易／内訳）",
     body:
       "説明：運営費を「合計率で入力」するか「項目ごとに入力」するかを選びます。\n結果への影響：内訳入力の方が精度が上がり、費用の偏り（修繕など）を表現しやすくなります。\nコツ：最初は簡易→慣れたら内訳がおすすめです。",
-  },
-  oerPropertyType: {
-    title: "運営経費テンプレ",
-    body:
-      "説明：物件タイプ別の一般的な運営費モデルを自動入力します。\n結果への影響：運営費の初期値が変わり、NOI・CFが変わります。\nコツ：実績値がある場合は、テンプレ適用後に上書きしてください。",
-  },
-  oerAgeBand: {
-    title: "築年数帯",
-    body:
-      "説明：築年数に応じた運営費（修繕・募集費等）の想定レンジです。\n結果への影響：運営費率や修繕の見積もりが変化します。\nコツ：実際の築年に近い帯を選ぶと精度が上がります。",
   },
   oerRateItemLabel: { title: "費目名", body: "率で計算する費目の名称。" },
   oerRateItemRate: { title: "率", body: "家賃に対する割合（%）。" },
@@ -243,7 +221,7 @@ const INPUT_HELP: Record<string, InputHelp> = {
   buildingEvaluationRate: {
     title: "建物評価率（%）",
     body:
-      "説明：建物の固定資産税評価額が、建物価格に対して何%かの仮定です。\n結果への影響：固定資産税・都市計画税が増減し、CFに影響します。\nコツ：新築は評価が高めに出ることがあります。",
+      "説明：建物の固定資産税評価額が、建物価格に対して何%かの仮定です。シミュレーションでは築年数に応じて年1.5%ずつ評価が低下する前提で計算します。\n結果への影響：固定資産税・都市計画税が増減し、CFに影響します。\nコツ：新築は評価が高めに出ることがあります。",
   },
   landTaxReductionRate: {
     title: "住宅用地特例（%）",
@@ -254,6 +232,16 @@ const INPUT_HELP: Record<string, InputHelp> = {
     title: "固定資産税・都市計画税率（%）",
     body:
       "説明：固定資産税と都市計画税を合算した実効税率です。\n結果への影響：毎年の固定費としてNOIを下げ、CFに影響します。\nコツ：物件所在地の税率・課税実績が分かる場合は実額に合わせるのが最も正確です。",
+  },
+  newBuildTaxReductionYears: {
+    title: "新築軽減年数（年）",
+    body:
+      "説明：新築の建物に適用される軽減期間です（通常3年、長期優良住宅は5年）。\n結果への影響：期間中は固定資産税が低くなり、CFが改善します。",
+  },
+  newBuildTaxReductionRate: {
+    title: "新築軽減率（建物%）",
+    body:
+      "説明：新築軽減の建物課税標準の割合です（通常50%）。\n結果への影響：期間中の固定資産税が減ります。",
   },
   vacancyModel: {
     title: "空室モデル",
@@ -325,9 +313,12 @@ const inferOerAgeBand = (age: number): OerAgeBand => {
 
 const inferOerPropertyType = (
   propertyType: string | null | undefined,
-  structure: StructureType
+  structure: StructureType,
+  unitCount: number | null | undefined
 ): OerPropertyType => {
   const normalized = (propertyType ?? "").replace(/\s/g, "");
+  const safeUnits = Number.isFinite(unitCount) ? Math.max(0, unitCount ?? 0) : 0;
+  if (safeUnits > 0 && safeUnits <= 1) return "UNIT";
   if (normalized.includes("区分")) return "UNIT";
   if (normalized.includes("マンション")) return "RC_APARTMENT";
   if (normalized.includes("アパート")) {
@@ -406,18 +397,10 @@ export const SimulationForm: React.FC<Props> = ({
     data.buildingRatio === 0;
   const [isPristine, setIsPristine] = useState(() => isBlankInput(initialData));
   const [buildingRatioTouched, setBuildingRatioTouched] = useState(false);
-  const [oerTypeTouched, setOerTypeTouched] = useState(false);
-  const [oerAgeTouched, setOerAgeTouched] = useState(false);
-  const [oerPropertyType, setOerPropertyType] = useState<OerPropertyType>(() =>
-    inferOerPropertyType(listing?.propertyType, initialData.structure)
-  );
-  const [oerAgeBand, setOerAgeBand] = useState<OerAgeBand>(() =>
-    inferOerAgeBand(initialData.buildingAge)
-  );
+  const [oerRateTouched, setOerRateTouched] = useState(false);
   const [openPanels, setOpenPanels] = useState({
     basic: true,
     loan: true,
-    oer: true,
     initial: true,
     repair: true,
     advanced: true,
@@ -426,6 +409,8 @@ export const SimulationForm: React.FC<Props> = ({
   const displayValue = (value: number, scale = 1) =>
     isPristine && value === 0 ? "" : value / scale;
   const displayPercent = (value: number) => (isPristine && value === 0 ? "" : value);
+  const displayPercentOptional = (value?: number | null) =>
+    Number.isFinite(value as number) ? (value as number) : "";
   const autoFilledSet = useMemo(() => new Set(autoFilledKeys), [autoFilledKeys]);
   const isAutoFilled = (key: keyof PropertyInput) => autoFilledSet.has(key);
   const getInputHelp = (helpKey: string, fallbackTitle: string): InputHelp => {
@@ -482,15 +467,19 @@ export const SimulationForm: React.FC<Props> = ({
     renderHelpLabel(text, key, key);
   const getInputHelpText = (helpKey: string, fallbackTitle: string) =>
     getInputHelp(helpKey, fallbackTitle).body;
-  useEffect(() => {
-    if (oerTypeTouched) return;
-    setOerPropertyType(inferOerPropertyType(listing?.propertyType, formData.structure));
-  }, [listing?.propertyType, formData.structure, oerTypeTouched]);
-
-  useEffect(() => {
-    if (oerAgeTouched) return;
-    setOerAgeBand(inferOerAgeBand(formData.buildingAge));
-  }, [formData.buildingAge, oerAgeTouched]);
+  const oerPropertyType = useMemo(
+    () =>
+      inferOerPropertyType(
+        listing?.propertyType,
+        formData.structure,
+        formData.unitCount
+      ),
+    [listing?.propertyType, formData.structure, formData.unitCount]
+  );
+  const oerAgeBand = useMemo(
+    () => inferOerAgeBand(formData.buildingAge),
+    [formData.buildingAge]
+  );
   const legalLife = LEGAL_USEFUL_LIFE[formData.structure];
   const miscCostRate = Number.isFinite(formData.miscCostRate)
     ? formData.miscCostRate
@@ -525,6 +514,12 @@ export const SimulationForm: React.FC<Props> = ({
   const propertyTaxRate = Number.isFinite(formData.propertyTaxRate)
     ? formData.propertyTaxRate
     : initialData.propertyTaxRate ?? 1.7;
+  const newBuildTaxReductionYears = Number.isFinite(formData.newBuildTaxReductionYears)
+    ? formData.newBuildTaxReductionYears
+    : initialData.newBuildTaxReductionYears ?? 3;
+  const newBuildTaxReductionRate = Number.isFinite(formData.newBuildTaxReductionRate)
+    ? formData.newBuildTaxReductionRate
+    : initialData.newBuildTaxReductionRate ?? 50;
   const equipmentUsefulLifeValue = Number.isFinite(formData.equipmentUsefulLife)
     ? formData.equipmentUsefulLife
     : initialData.equipmentUsefulLife ?? 15;
@@ -555,6 +550,37 @@ export const SimulationForm: React.FC<Props> = ({
   const occupancyRateValue = Number.isFinite(formData.occupancyRate)
     ? formData.occupancyRate
     : initialData.occupancyRate ?? 100;
+  const occupancyDetailEnabledValue =
+    typeof formData.occupancyDetailEnabled === "boolean"
+      ? formData.occupancyDetailEnabled
+      : initialData.occupancyDetailEnabled ?? false;
+  const occupancyRateYear1to2Value = Number.isFinite(formData.occupancyRateYear1to2)
+    ? formData.occupancyRateYear1to2
+    : initialData.occupancyRateYear1to2;
+  const occupancyRateYear3to10Value = Number.isFinite(formData.occupancyRateYear3to10)
+    ? formData.occupancyRateYear3to10
+    : initialData.occupancyRateYear3to10;
+  const occupancyRateYear11to20Value = Number.isFinite(formData.occupancyRateYear11to20)
+    ? formData.occupancyRateYear11to20
+    : initialData.occupancyRateYear11to20;
+  const occupancyRateYear20to30Value = Number.isFinite(formData.occupancyRateYear20to30)
+    ? formData.occupancyRateYear20to30
+    : initialData.occupancyRateYear20to30;
+  const occupancyRateYear30to40Value = Number.isFinite(formData.occupancyRateYear30to40)
+    ? formData.occupancyRateYear30to40
+    : initialData.occupancyRateYear30to40;
+  const occupancyRatePreview = getOccupancyRateForAge(
+    Number.isFinite(formData.buildingAge) ? formData.buildingAge : 0,
+    occupancyDetailEnabledValue,
+    {
+      occupancyRate: occupancyRateValue,
+      occupancyRateYear1to2: occupancyRateYear1to2Value,
+      occupancyRateYear3to10: occupancyRateYear3to10Value,
+      occupancyRateYear11to20: occupancyRateYear11to20Value,
+      occupancyRateYear20to30: occupancyRateYear20to30Value,
+      occupancyRateYear30to40: occupancyRateYear30to40Value,
+    }
+  );
   const rentDeclineValue = Number.isFinite(formData.rentDeclineRate)
     ? formData.rentDeclineRate
     : initialData.rentDeclineRate ?? 0;
@@ -618,8 +644,7 @@ export const SimulationForm: React.FC<Props> = ({
   );
   const estimatedTotal = formData.price + initialCostsTotal;
   const annualFullRent = formData.monthlyRent * 12;
-  const oerTemplate = OER_TEMPLATES[oerPropertyType][oerAgeBand];
-  const oerBase = oerTemplate.exclTax;
+  const oerBaseExact = getOerRateForAge(oerPropertyType, formData.buildingAge);
   const repairEvents = Array.isArray(formData.repairEvents)
     ? formData.repairEvents
     : initialData.repairEvents ?? [];
@@ -653,12 +678,32 @@ export const SimulationForm: React.FC<Props> = ({
     oerLeasingTenancyYearsValue > 0
       ? (oerLeasingMonthsValue / (oerLeasingTenancyYearsValue * 12)) * 100
       : 0;
-  const oerExtras =
-    (oerIncludeAd ? OER_AD_BONUS : 0) +
-    (oerIncludeRepair ? OER_REPAIR_BONUS : 0) +
-    (oerIncludeBuffer ? OER_BUFFER_BONUS : 0);
-  const oerSuggested = Math.max(0, oerBase + oerExtras);
-  const oerSuggestedRounded = Number(oerSuggested.toFixed(1));
+  const oerBaseRounded = Number(oerBaseExact.toFixed(1));
+
+  useEffect(() => {
+    if (oerModeValue === "SIMPLE") {
+      if (oerRateTouched) return;
+      if (formData.operatingExpenseRate === oerBaseRounded) return;
+      const next = { ...formData, operatingExpenseRate: oerBaseRounded };
+      setFormData(next);
+      setIsPristine(false);
+      onCalculate(next);
+      return;
+    }
+    if (oerModeValue !== "DETAILED") return;
+    if (oerRateItems.length > 0 || oerFixedItems.length > 0 || oerEventItems.length > 0) return;
+    applyOerPreset("DETAILED");
+  }, [
+    oerModeValue,
+    oerBaseRounded,
+    formData.operatingExpenseRate,
+    oerRateTouched,
+    oerRateItems.length,
+    oerFixedItems.length,
+    oerEventItems.length,
+    oerPropertyType,
+    oerAgeBand,
+  ]);
 
   useEffect(() => {
     if (oerModeValue !== "DETAILED") return;
@@ -706,6 +751,24 @@ export const SimulationForm: React.FC<Props> = ({
     const occupancyRate = Number.isFinite(formData.occupancyRate)
       ? formData.occupancyRate
       : initialData.occupancyRate ?? 100;
+    const occupancyDetailEnabled = typeof formData.occupancyDetailEnabled === "boolean"
+      ? formData.occupancyDetailEnabled
+      : initialData.occupancyDetailEnabled ?? false;
+    const occupancyRateYear1to2 = Number.isFinite(formData.occupancyRateYear1to2)
+      ? formData.occupancyRateYear1to2
+      : initialData.occupancyRateYear1to2 ?? 0;
+    const occupancyRateYear3to10 = Number.isFinite(formData.occupancyRateYear3to10)
+      ? formData.occupancyRateYear3to10
+      : initialData.occupancyRateYear3to10 ?? 0;
+    const occupancyRateYear11to20 = Number.isFinite(formData.occupancyRateYear11to20)
+      ? formData.occupancyRateYear11to20
+      : initialData.occupancyRateYear11to20 ?? 0;
+    const occupancyRateYear20to30 = Number.isFinite(formData.occupancyRateYear20to30)
+      ? formData.occupancyRateYear20to30
+      : initialData.occupancyRateYear20to30 ?? 0;
+    const occupancyRateYear30to40 = Number.isFinite(formData.occupancyRateYear30to40)
+      ? formData.occupancyRateYear30to40
+      : initialData.occupancyRateYear30to40 ?? 0;
     const rentDeclineRate = Number.isFinite(formData.rentDeclineRate)
       ? formData.rentDeclineRate
       : initialData.rentDeclineRate ?? 0;
@@ -742,6 +805,12 @@ export const SimulationForm: React.FC<Props> = ({
     const taxRate = Number.isFinite(formData.propertyTaxRate)
       ? formData.propertyTaxRate
       : initialData.propertyTaxRate ?? 1.7;
+    const newBuildReductionYears = Number.isFinite(formData.newBuildTaxReductionYears)
+      ? formData.newBuildTaxReductionYears
+      : initialData.newBuildTaxReductionYears ?? 3;
+    const newBuildReductionRate = Number.isFinite(formData.newBuildTaxReductionRate)
+      ? formData.newBuildTaxReductionRate
+      : initialData.newBuildTaxReductionRate ?? 50;
     const incomeRate = Number.isFinite(formData.incomeTaxRate)
       ? formData.incomeTaxRate
       : initialData.incomeTaxRate ?? 20;
@@ -826,6 +895,12 @@ export const SimulationForm: React.FC<Props> = ({
       : initialData.exitDiscountRate ?? 4;
     if (
       occupancyRate === formData.occupancyRate &&
+      occupancyDetailEnabled === formData.occupancyDetailEnabled &&
+      occupancyRateYear1to2 === formData.occupancyRateYear1to2 &&
+      occupancyRateYear3to10 === formData.occupancyRateYear3to10 &&
+      occupancyRateYear11to20 === formData.occupancyRateYear11to20 &&
+      occupancyRateYear20to30 === formData.occupancyRateYear20to30 &&
+      occupancyRateYear30to40 === formData.occupancyRateYear30to40 &&
       rentDeclineRate === formData.rentDeclineRate &&
       miscRate === formData.miscCostRate &&
       waterRate === formData.waterContributionRate &&
@@ -838,6 +913,8 @@ export const SimulationForm: React.FC<Props> = ({
       buildingRate === formData.buildingEvaluationRate &&
       landReduction === formData.landTaxReductionRate &&
       taxRate === formData.propertyTaxRate &&
+      newBuildReductionYears === formData.newBuildTaxReductionYears &&
+      newBuildReductionRate === formData.newBuildTaxReductionRate &&
       incomeRate === formData.incomeTaxRate &&
       vacancyMode === formData.vacancyModel &&
       cycleYears === formData.vacancyCycleYears &&
@@ -872,6 +949,12 @@ export const SimulationForm: React.FC<Props> = ({
     const patched = {
       ...formData,
       occupancyRate,
+      occupancyDetailEnabled,
+      occupancyRateYear1to2,
+      occupancyRateYear3to10,
+      occupancyRateYear11to20,
+      occupancyRateYear20to30,
+      occupancyRateYear30to40,
       rentDeclineRate,
       miscCostRate: miscRate,
       waterContributionRate: waterRate,
@@ -884,6 +967,8 @@ export const SimulationForm: React.FC<Props> = ({
       buildingEvaluationRate: buildingRate,
       landTaxReductionRate: landReduction,
       propertyTaxRate: taxRate,
+      newBuildTaxReductionYears: newBuildReductionYears,
+      newBuildTaxReductionRate: newBuildReductionRate,
       incomeTaxRate: incomeRate,
       vacancyModel: vacancyMode,
       vacancyCycleYears: cycleYears,
@@ -1101,7 +1186,7 @@ export const SimulationForm: React.FC<Props> = ({
 
   const applyOerPreset = (mode: "SIMPLE" | "DETAILED") => {
     if (mode === "SIMPLE") {
-      handleChange("operatingExpenseRate", oerSuggestedRounded);
+      handleChange("operatingExpenseRate", oerBaseRounded);
       return;
     }
     const preset = buildOerPreset();
@@ -1127,6 +1212,50 @@ export const SimulationForm: React.FC<Props> = ({
       return;
     }
     handleChange("oerMode", mode);
+  };
+
+  const handleOccupancyDetailToggle = (enabled: boolean) => {
+    if (!enabled) {
+      handleChange("occupancyDetailEnabled", false);
+      return;
+    }
+    const base =
+      Number.isFinite(formData.occupancyRate) && formData.occupancyRate > 0
+        ? formData.occupancyRate
+        : initialData.occupancyRate ?? 100;
+    const next = {
+      ...formData,
+      occupancyDetailEnabled: true,
+      occupancyRateYear1to2:
+        Number.isFinite(formData.occupancyRateYear1to2) &&
+        (formData.occupancyRateYear1to2 ?? 0) > 0
+          ? formData.occupancyRateYear1to2
+          : base,
+      occupancyRateYear3to10:
+        Number.isFinite(formData.occupancyRateYear3to10) &&
+        (formData.occupancyRateYear3to10 ?? 0) > 0
+          ? formData.occupancyRateYear3to10
+          : base,
+      occupancyRateYear11to20:
+        Number.isFinite(formData.occupancyRateYear11to20) &&
+        (formData.occupancyRateYear11to20 ?? 0) > 0
+          ? formData.occupancyRateYear11to20
+          : base,
+      occupancyRateYear20to30:
+        Number.isFinite(formData.occupancyRateYear20to30) &&
+        (formData.occupancyRateYear20to30 ?? 0) > 0
+          ? formData.occupancyRateYear20to30
+          : base,
+      occupancyRateYear30to40:
+        Number.isFinite(formData.occupancyRateYear30to40) &&
+        (formData.occupancyRateYear30to40 ?? 0) > 0
+          ? formData.occupancyRateYear30to40
+          : base,
+    };
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("occupancyDetailEnabled");
+    onCalculate(next);
   };
 
   const updateOerRateItem = (id: string, patch: Partial<OerRateItem>) => {
@@ -1194,7 +1323,7 @@ export const SimulationForm: React.FC<Props> = ({
   const calculateOerPreview = () => {
     const grossPotentialRent = Math.max(0, annualFullRent);
     const effectiveIncome =
-      grossPotentialRent * Math.max(0, Math.min(100, formData.occupancyRate || 0)) / 100;
+      grossPotentialRent * Math.max(0, Math.min(100, occupancyRatePreview || 0)) / 100;
     const rateExpense = oerRateItems.reduce((sum, item) => {
       if (!item.enabled) return sum;
       const base = item.base === "EGI" ? effectiveIncome : grossPotentialRent;
@@ -1435,165 +1564,7 @@ export const SimulationForm: React.FC<Props> = ({
                           onChange={(e) => handleChange("rentDeclineRate", Number(e.target.value))}
                         />
                       </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="form-input-right">
-              <div className="form-input-right-grid">
-                <div className="form-input-right-col">
-            {/* --- 4. 運営経費 (OER) セクション --- */}
-            <div className="form-section form-panel oer-panel">
-              <div className="form-panel-head">
-                <h3 className="form-section-title">運営経費 (OER)</h3>
-                <button
-                  type="button"
-                  className="section-toggle"
-                  onClick={() => togglePanel("oer")}
-                  aria-expanded={openPanels.oer}
-                >
-                  {openPanels.oer ? "▼ 閉じる" : "▶ 開く"}
-                </button>
-              </div>
-              {openPanels.oer ? (
-                <>
-                  <div className="oer-box">
-                    <div className="oer-box-head">
-                      <div>
-                        <div className="oer-box-title">
-                          入力方式
-                          {renderInfoButton("oerMode", "入力方式")}
-                        </div>
-                        <p className="form-note">簡易入力か内訳入力を選べます。</p>
-                      </div>
-                      <div className="oer-mode-toggle" role="group" aria-label="運営経費モード">
-                        <button
-                          type="button"
-                          className={oerModeValue === "SIMPLE" ? "is-active" : undefined}
-                          onClick={() => handleOerModeChange("SIMPLE")}
-                        >
-                          簡易
-                        </button>
-                        <button
-                          type="button"
-                          className={oerModeValue === "DETAILED" ? "is-active" : undefined}
-                          onClick={() => handleOerModeChange("DETAILED")}
-                        >
-                          内訳
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="form-grid oer-top-grid">
-                      <div>
-                        {renderHelpLabel("運営経費テンプレ", "oerPropertyType")}
-                        <select
-                          value={oerPropertyType}
-                          onChange={(e) => {
-                            setOerTypeTouched(true);
-                            setOerPropertyType(e.target.value as OerPropertyType);
-                          }}
-                        >
-                          {OER_PROPERTY_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        {renderHelpLabel("築年数帯", "oerAgeBand")}
-                        <select
-                          value={oerAgeBand}
-                          onChange={(e) => {
-                            setOerAgeTouched(true);
-                            setOerAgeBand(e.target.value as OerAgeBand);
-                          }}
-                        >
-                          {OER_AGE_BANDS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        {renderLabel("戸数", "unitCount")}
-                        <input
-                          type="number"
-                          value={displayValue(formData.unitCount)}
-                          onChange={(e) => handleChange("unitCount", Number(e.target.value))}
-                        />
-                      </div>
-                      <div>
-                        {renderLabel("清掃回数/月", "cleaningVisitsPerMonth")}
-                        <select
-                          value={
-                            formData.cleaningVisitsPerMonth > 0
-                              ? String(formData.cleaningVisitsPerMonth)
-                              : ""
-                          }
-                          onChange={(e) =>
-                            handleChange("cleaningVisitsPerMonth", Number(e.target.value))
-                          }
-                        >
-                          <option value="" disabled>
-                            選択
-                          </option>
-                          <option value="2">月2回</option>
-                          <option value="4">月4回</option>
-                        </select>
-                        <p className="form-note">9〜16戸は相場で清掃費を自動入力します。</p>
-                      </div>
-                    </div>
-                    <div className="form-grid two-col">
-                      <div>
-                        <div className="oer-actions">
-                          <button
-                            type="button"
-                            className="section-toggle"
-                            onClick={() => applyOerPreset(oerModeValue)}
-                          >
-                            {oerModeValue === "SIMPLE" ? "テンプレ適用" : "内訳を生成"}
-                          </button>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="form-note">
-                          推定: {oerSuggestedRounded}% (固都税除外{oerTemplate.exclTax}% + 補正)
-                        </p>
-                      </div>
-                    </div>
-                    <div className="oer-template">
-                      <div className="oer-template-title">運営経費率テンプレ（固都税除外）</div>
-                      <table className="oer-template-table">
-                        <thead>
-                          <tr>
-                            <th>物件タイプ</th>
-                            {OER_AGE_BANDS.map((band) => (
-                              <th key={band.value}>{band.label}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {OER_PROPERTY_OPTIONS.map((option) => (
-                            <tr key={option.value}>
-                              <td>{option.label}</td>
-                              {OER_AGE_BANDS.map((band) => (
-                                <td key={`${option.value}-${band.value}`}>
-                                  {OER_TEMPLATES[option.value][band.value].exclTax}%
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {oerModeValue === "SIMPLE" ? (
-                      <div className="form-grid three-col compact">
+                      {oerModeValue === "SIMPLE" ? (
                         <div>
                           {renderLabel("運営経費率 (%)", "operatingExpenseRate")}
                           <input
@@ -1602,13 +1573,37 @@ export const SimulationForm: React.FC<Props> = ({
                             className={
                               isAutoFilled("operatingExpenseRate") ? "auto-input" : undefined
                             }
-                            onChange={(e) =>
-                              handleChange("operatingExpenseRate", Number(e.target.value))
-                            }
+                            onChange={(e) => {
+                              setOerRateTouched(true);
+                              handleChange("operatingExpenseRate", Number(e.target.value));
+                            }}
                           />
                         </div>
+                      ) : null}
+                    </div>
+                    <div className="oer-box-head">
+                      <div>
+                        <div className="input-label">
+                          <span className="input-label-text">詳細モード</span>
+                          {renderInfoButton("oerMode", "詳細モード")}
+                        </div>
+                        <p className="form-note">内訳入力を使う場合はONにします。</p>
                       </div>
-                    ) : (
+                      <div className="inline-toggle">
+                        <input
+                          type="checkbox"
+                          id="oerDetailMode"
+                          checked={oerModeValue === "DETAILED"}
+                          onChange={(e) =>
+                            handleOerModeChange(e.target.checked ? "DETAILED" : "SIMPLE")
+                          }
+                        />
+                        <label htmlFor="oerDetailMode" className="inline-label">
+                          有効にする
+                        </label>
+                      </div>
+                    </div>
+                    {oerModeValue === "DETAILED" ? (
                       <>
                         <div className="oer-summary">
                           <div>
@@ -1691,10 +1686,9 @@ export const SimulationForm: React.FC<Props> = ({
                               ))
                             )}
                           </div>
-
                           <div className="oer-detail-block">
                             <div className="oer-detail-head">
-                              <span>固定費 (年額)</span>
+                              <span>固定費</span>
                               <button
                                 type="button"
                                 className="section-toggle"
@@ -1704,7 +1698,7 @@ export const SimulationForm: React.FC<Props> = ({
                               </button>
                             </div>
                             {oerFixedItems.length === 0 ? (
-                              <p className="form-note">固定費が未設定です。</p>
+                              <p className="form-note">内訳が未設定です。</p>
                             ) : (
                               oerFixedItems.map((item) => (
                                 <div className="oer-item-row fixed" key={item.id}>
@@ -1756,10 +1750,9 @@ export const SimulationForm: React.FC<Props> = ({
                               ))
                             )}
                           </div>
-
                           <div className="oer-detail-block">
                             <div className="oer-detail-head">
-                              <span>イベント (平準化/ドカン)</span>
+                              <span>イベント費</span>
                               <button
                                 type="button"
                                 className="section-toggle"
@@ -1769,7 +1762,7 @@ export const SimulationForm: React.FC<Props> = ({
                               </button>
                             </div>
                             {oerEventItems.length === 0 ? (
-                              <p className="form-note">イベントが未設定です。</p>
+                              <p className="form-note">内訳が未設定です。</p>
                             ) : (
                               oerEventItems.map((item) => (
                                 <div className="oer-item-row event" key={item.id}>
@@ -1840,7 +1833,6 @@ export const SimulationForm: React.FC<Props> = ({
                               ))
                             )}
                           </div>
-
                           <div className="oer-detail-block">
                             <div className="oer-detail-head">
                               <span>リーシング費 (AD/仲介)</span>
@@ -1877,12 +1869,14 @@ export const SimulationForm: React.FC<Props> = ({
                           </div>
                         </div>
                       </>
-                    )}
-                  </div>
-                </>
-              ) : null}
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
             </div>
-                </div>
+
+            <div className="form-input-right">
+              <div className="form-input-right-grid">
                 <div className="form-input-right-col">
             <div className="form-section form-panel">
               <div className="form-panel-head">
@@ -1898,80 +1892,98 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.repair ? (
                 <>
-                  <div className="form-grid two-col compact vacancy-grid">
+                  <div className="form-grid one-col compact">
                     <div>
-                      {renderHelpLabel("空室モデル", "vacancyModel")}
-                      <select
-                        value={vacancyModel}
-                        onChange={(e) => handleChange("vacancyModel", e.target.value)}
-                      >
-                        <option value="FIXED">固定（入居率のみ）</option>
-                        <option value="CYCLE">周期モデル</option>
-                        <option value="PROBABILITY">確率モデル</option>
-                      </select>
-                    </div>
-                    <div>
-                      {renderLabel("入居率 (%)", "occupancyRate")}
-                      <input
-                        type="number"
-                        value={displayPercent(occupancyRateValue)}
-                        className={isAutoFilled("occupancyRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("occupancyRate", Number(e.target.value))}
-                      />
-                      <p className="form-note">空室モデルは入居率に上乗せで反映</p>
+                      {occupancyDetailEnabledValue ? (
+                        <>
+                          <div className="input-label">
+                            <span className="input-label-text">入居率 (%)</span>
+                            {renderInfoButton("occupancyRate", "入居率 (%)")}
+                          </div>
+                          <p className="form-note">詳細モードで設定中</p>
+                        </>
+                      ) : (
+                        <>
+                          {renderLabel("入居率 (%)", "occupancyRate")}
+                          <input
+                            type="number"
+                            value={displayPercent(occupancyRateValue)}
+                            className={isAutoFilled("occupancyRate") ? "auto-input" : undefined}
+                            onChange={(e) => handleChange("occupancyRate", Number(e.target.value))}
+                          />
+                        </>
+                      )}
                     </div>
                   </div>
-                  {vacancyModel === "CYCLE" ? (
-                    <div className="form-grid two-col compact">
+                  <div className="inline-toggle form-split-row">
+                    {renderHelpLabel("入居率 詳細モード", "occupancyDetailEnabled")}
+                    <div className="inline-toggle">
+                      <input
+                        type="checkbox"
+                        id="occupancyDetailEnabled"
+                        checked={occupancyDetailEnabledValue}
+                        onChange={(e) => handleOccupancyDetailToggle(e.target.checked)}
+                      />
+                      <label htmlFor="occupancyDetailEnabled" className="inline-label">
+                        有効にする
+                      </label>
+                    </div>
+                  </div>
+                  {occupancyDetailEnabledValue ? (
+                    <div className="form-grid one-col compact occupancy-detail-grid">
                       <div>
-                        {renderLabel("空室周期 (年)", "vacancyCycleYears")}
+                        {renderLabel("1年目〜2年目 (%)", "occupancyRateYear1to2")}
                         <input
                           type="number"
-                          value={displayValue(vacancyCycleYears)}
-                          className={isAutoFilled("vacancyCycleYears") ? "auto-input" : undefined}
-                          onChange={(e) => handleChange("vacancyCycleYears", Number(e.target.value))}
+                          value={displayPercentOptional(occupancyRateYear1to2Value)}
+                          onChange={(e) =>
+                            handleChange("occupancyRateYear1to2", Number(e.target.value))
+                          }
                         />
                       </div>
                       <div>
-                        {renderLabel("空室月数", "vacancyCycleMonths")}
+                        {renderLabel("3年目〜10年目 (%)", "occupancyRateYear3to10")}
                         <input
                           type="number"
-                          value={displayValue(vacancyCycleMonths)}
-                          className={isAutoFilled("vacancyCycleMonths") ? "auto-input" : undefined}
+                          value={displayPercentOptional(occupancyRateYear3to10Value)}
                           onChange={(e) =>
-                            handleChange("vacancyCycleMonths", Number(e.target.value))
+                            handleChange("occupancyRateYear3to10", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div>
+                        {renderLabel("11年目〜20年目 (%)", "occupancyRateYear11to20")}
+                        <input
+                          type="number"
+                          value={displayPercentOptional(occupancyRateYear11to20Value)}
+                          onChange={(e) =>
+                            handleChange("occupancyRateYear11to20", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div>
+                        {renderLabel("20年目〜30年目 (%)", "occupancyRateYear20to30")}
+                        <input
+                          type="number"
+                          value={displayPercentOptional(occupancyRateYear20to30Value)}
+                          onChange={(e) =>
+                            handleChange("occupancyRateYear20to30", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div>
+                        {renderLabel("30年目〜40年目 (%)", "occupancyRateYear30to40")}
+                        <input
+                          type="number"
+                          value={displayPercentOptional(occupancyRateYear30to40Value)}
+                          onChange={(e) =>
+                            handleChange("occupancyRateYear30to40", Number(e.target.value))
                           }
                         />
                       </div>
                     </div>
                   ) : null}
-                  {vacancyModel === "PROBABILITY" ? (
-                    <div className="form-grid two-col compact">
-                      <div>
-                        {renderLabel("年間空室確率 (%)", "vacancyProbability")}
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={displayPercent(vacancyProbability)}
-                          className={isAutoFilled("vacancyProbability") ? "auto-input" : undefined}
-                          onChange={(e) =>
-                            handleChange("vacancyProbability", Number(e.target.value))
-                          }
-                        />
-                      </div>
-                      <div>
-                        {renderLabel("空室月数", "vacancyProbabilityMonths")}
-                        <input
-                          type="number"
-                          value={displayValue(vacancyProbabilityMonths)}
-                          className={isAutoFilled("vacancyProbabilityMonths") ? "auto-input" : undefined}
-                          onChange={(e) =>
-                            handleChange("vacancyProbabilityMonths", Number(e.target.value))
-                          }
-                        />
-                      </div>
-                    </div>
-                  ) : null}
+                  
 
                   <div className="repair-block">
                     <div className="inline-toggle form-split-row">
@@ -2556,6 +2568,36 @@ export const SimulationForm: React.FC<Props> = ({
                         className={isAutoFilled("propertyTaxRate") ? "auto-input" : undefined}
                         onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
                       />
+                    </div>
+                    <div>
+                      {renderLabel("新築軽減年数 (年)", "newBuildTaxReductionYears")}
+                      <input
+                        type="number"
+                        step="1"
+                        value={displayValue(newBuildTaxReductionYears)}
+                        className={
+                          isAutoFilled("newBuildTaxReductionYears") ? "auto-input" : undefined
+                        }
+                        onChange={(e) =>
+                          handleChange("newBuildTaxReductionYears", Number(e.target.value))
+                        }
+                      />
+                      <p className="form-note">通常3年、長期優良住宅は5年</p>
+                    </div>
+                    <div>
+                      {renderLabel("新築軽減率 (建物%)", "newBuildTaxReductionRate")}
+                      <input
+                        type="number"
+                        step="1"
+                        value={displayPercent(newBuildTaxReductionRate)}
+                        className={
+                          isAutoFilled("newBuildTaxReductionRate") ? "auto-input" : undefined
+                        }
+                        onChange={(e) =>
+                          handleChange("newBuildTaxReductionRate", Number(e.target.value))
+                        }
+                      />
+                      <p className="form-note">通常50%（建物課税標準の1/2）</p>
                     </div>
                   </div>
                 </>

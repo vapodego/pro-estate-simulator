@@ -7,7 +7,10 @@ import {
   OerRateItem,
   OerFixedItem,
   OerEventItem,
+  OerPropertyType,
 } from './types';
+import { getOerRateForAge } from './oer';
+import { getOccupancyRateForAge } from './occupancy';
 
 // 中古耐用年数の計算（簡便法） 
 export const calculateUsefulLife = (structure: StructureType, age: number): number => {
@@ -19,26 +22,55 @@ export const calculateUsefulLife = (structure: StructureType, age: number): numb
 };
 
 // 固定資産税の概算（住宅用地特例・簡易評価）
-const calculatePropertyTax = (
-  price: number,
-  buildingRatio: number,
-  landEvaluationRate: number,
-  buildingEvaluationRate: number,
-  landTaxReductionRate: number,
-  propertyTaxRate: number
-): number => {
-  const safePrice = Number.isFinite(price) ? price : 0;
-  const safeRatio = Number.isFinite(buildingRatio) ? buildingRatio : 0;
-  const safeLandRate = Number.isFinite(landEvaluationRate) ? landEvaluationRate : 70;
-  const safeBuildingRate = Number.isFinite(buildingEvaluationRate) ? buildingEvaluationRate : 50;
-  const safeLandReduction = Number.isFinite(landTaxReductionRate) ? landTaxReductionRate : 16.67;
+const calculatePropertyTax = (params: {
+  price: number;
+  buildingRatio: number;
+  landEvaluationRate: number;
+  buildingEvaluationRate: number;
+  landTaxReductionRate: number;
+  propertyTaxRate: number;
+  buildingAge: number;
+  newBuildTaxReductionYears: number;
+  newBuildTaxReductionRate: number;
+  year: number;
+}): number => {
+  const safePrice = Number.isFinite(params.price) ? params.price : 0;
+  const safeRatio = Number.isFinite(params.buildingRatio) ? params.buildingRatio : 0;
+  const safeLandRate = Number.isFinite(params.landEvaluationRate)
+    ? params.landEvaluationRate
+    : 70;
+  const safeBuildingRate = Number.isFinite(params.buildingEvaluationRate)
+    ? params.buildingEvaluationRate
+    : 50;
+  const safeLandReduction = Number.isFinite(params.landTaxReductionRate)
+    ? params.landTaxReductionRate
+    : 16.67;
   const safeTaxRate =
-    Number.isFinite(propertyTaxRate) && propertyTaxRate > 0 ? propertyTaxRate : 1.7;
+    Number.isFinite(params.propertyTaxRate) && params.propertyTaxRate > 0
+      ? params.propertyTaxRate
+      : 1.7;
+  const safeBuildingAge = Number.isFinite(params.buildingAge)
+    ? Math.max(0, Math.floor(params.buildingAge))
+    : 0;
+  const safeReductionYears = Number.isFinite(params.newBuildTaxReductionYears)
+    ? Math.max(0, Math.floor(params.newBuildTaxReductionYears))
+    : 0;
+  const safeReductionRate = Number.isFinite(params.newBuildTaxReductionRate)
+    ? Math.max(0, params.newBuildTaxReductionRate)
+    : 50;
+
   const buildingPrice = safePrice * (safeRatio / 100);
   const landPrice = Math.max(0, safePrice - buildingPrice);
   const landEvaluation = landPrice * (safeLandRate / 100);
-  const buildingEvaluation = buildingPrice * (safeBuildingRate / 100);
-  const taxableValue = landEvaluation * (safeLandReduction / 100) + buildingEvaluation;
+  const ageAtYear = safeBuildingAge + Math.max(0, params.year - 1);
+  const buildingDecayRate = 1.5;
+  const buildingDecayFactor = Math.max(0, 1 - (buildingDecayRate / 100) * ageAtYear);
+  const buildingEvaluation = buildingPrice * (safeBuildingRate / 100) * buildingDecayFactor;
+  const isReductionPeriod = safeReductionYears > 0 && ageAtYear < safeReductionYears;
+  const buildingTaxable = isReductionPeriod
+    ? buildingEvaluation * (safeReductionRate / 100)
+    : buildingEvaluation;
+  const taxableValue = landEvaluation * (safeLandReduction / 100) + buildingTaxable;
   return Math.round(taxableValue * (safeTaxRate / 100));
 };
 
@@ -67,6 +99,14 @@ const calculateProgressiveTax = (taxableIncome: number): number => {
   const incomeTax = taxableIncome * bracket.rate - bracket.deduction;
   const residentTax = taxableIncome * 0.1;
   return Math.max(0, Math.round(incomeTax + residentTax));
+};
+
+const inferOerPropertyType = (structure: StructureType, unitCount: number): OerPropertyType => {
+  const safeUnits = Number.isFinite(unitCount) ? unitCount : 0;
+  if (safeUnits > 0 && safeUnits <= 1) return "UNIT";
+  if (structure === "WOOD") return "WOOD_APARTMENT";
+  if (structure === "S_HEAVY" || structure === "S_LIGHT") return "STEEL_APARTMENT";
+  return "RC_APARTMENT";
 };
 
 const calculateOerDetailed = (
@@ -122,15 +162,6 @@ export const calculateSimulation = (
   const results: YearlyResult[] = [];
   const safeNumber = (value: number, fallback: number) =>
     Number.isFinite(value) ? value : fallback;
-  const fixedAssetTax = calculatePropertyTax(
-    input.price,
-    input.buildingRatio,
-    input.landEvaluationRate,
-    input.buildingEvaluationRate,
-    input.landTaxReductionRate,
-    input.propertyTaxRate
-  );
-
   const buildingPriceForTax = input.price * (input.buildingRatio / 100);
   const landPriceForTax = Math.max(0, input.price - buildingPriceForTax);
   const landEvaluation = landPriceForTax * (safeNumber(input.landEvaluationRate, 70) / 100);
@@ -197,11 +228,35 @@ export const calculateSimulation = (
 
   // 35年分シミュレーション（長期保有シミュレーション）
   for (let year = 1; year <= 35; year++) {
+    const fixedAssetTax = calculatePropertyTax({
+      price: input.price,
+      buildingRatio: input.buildingRatio,
+      landEvaluationRate: input.landEvaluationRate,
+      buildingEvaluationRate: input.buildingEvaluationRate,
+      landTaxReductionRate: input.landTaxReductionRate,
+      propertyTaxRate: input.propertyTaxRate,
+      buildingAge: input.buildingAge,
+      newBuildTaxReductionYears: input.newBuildTaxReductionYears,
+      newBuildTaxReductionRate: input.newBuildTaxReductionRate,
+      year,
+    });
     // --- A. インカム計算 ---
     // 家賃収入（入居率・家賃下落率を考慮） [cite: 625]
     const baseAnnualRent = safeNumber(input.monthlyRent, 0) * 12;
     const rentDeclineRate = safeNumber(input.rentDeclineRate, 0);
-    const occupancyRate = safeNumber(input.occupancyRate, 100);
+    const ageAtYear = safeNumber(input.buildingAge, 0) + (year - 1);
+    const occupancyRate = getOccupancyRateForAge(
+      ageAtYear,
+      input.occupancyDetailEnabled ?? false,
+      {
+        occupancyRate: safeNumber(input.occupancyRate, 100),
+        occupancyRateYear1to2: input.occupancyRateYear1to2,
+        occupancyRateYear3to10: input.occupancyRateYear3to10,
+        occupancyRateYear11to20: input.occupancyRateYear11to20,
+        occupancyRateYear20to30: input.occupancyRateYear20to30,
+        occupancyRateYear30to40: input.occupancyRateYear30to40,
+      }
+    );
     const declineFactor = rentCurveEnabled
       ? Math.pow(1 - rentDeclineEarlyRate / 100, Math.floor((Math.min(year, rentDeclineSwitchYear) - 1) / 2)) *
         Math.pow(1 - rentDeclineLateRate / 100, Math.floor(Math.max(0, year - rentDeclineSwitchYear) / 2))
@@ -226,6 +281,15 @@ export const calculateSimulation = (
     const grossPotentialRent = baseAnnualRent * declineFactor;
     const grossIncome = grossPotentialRent * (adjustedOccupancy / 100);
     const opExpenseRate = safeNumber(input.operatingExpenseRate, 0);
+    const oerTemplateType =
+      input.oerTemplateType ?? inferOerPropertyType(input.structure, input.unitCount);
+    const baseTemplateRate = getOerRateForAge(
+      oerTemplateType,
+      safeNumber(input.buildingAge, 0)
+    );
+    const shouldAutoOer =
+      input.oerMode === "SIMPLE" && Math.abs(opExpenseRate - baseTemplateRate) < 0.01;
+    const dynamicOerRate = getOerRateForAge(oerTemplateType, ageAtYear);
     const opExpense =
       input.oerMode === "DETAILED"
         ? calculateOerDetailed(
@@ -239,7 +303,7 @@ export const calculateSimulation = (
             safeNumber(input.oerLeasingMonths, 0),
             safeNumber(input.oerLeasingTenancyYears, 0)
           )
-        : grossIncome * (opExpenseRate / 100);
+        : grossIncome * ((shouldAutoOer ? dynamicOerRate : opExpenseRate) / 100);
     const repairCost = Array.isArray(input.repairEvents)
       ? input.repairEvents.reduce((sum, event) => {
           if (event?.year !== year) return sum;

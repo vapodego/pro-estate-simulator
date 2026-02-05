@@ -21,6 +21,8 @@ export interface RepairEvent {
 export type OerBaseType = 'GPR' | 'EGI';
 export type OerMode = 'SIMPLE' | 'DETAILED';
 export type OerEventMode = 'RESERVE' | 'CASH';
+export type OerPropertyType = 'UNIT' | 'WOOD_APARTMENT' | 'STEEL_APARTMENT' | 'RC_APARTMENT';
+export type OerAgeBand = 'NEW' | 'MID' | 'OLD';
 
 export interface OerRateItem {
   id: string;
@@ -56,6 +58,8 @@ export interface PropertyInput {
   buildingEvaluationRate: number; // 建物評価率（%）
   landTaxReductionRate: number; // 住宅用地特例（%）
   propertyTaxRate: number;    // 固定資産税率（%）
+  newBuildTaxReductionYears: number; // 新築軽減の年数（年）
+  newBuildTaxReductionRate: number; // 新築軽減率（建物課税標準の%）
   structure: StructureType;   // 構造
   buildingAge: number;        // 築年数
   
@@ -81,11 +85,19 @@ export interface PropertyInput {
   // 収支設定
   monthlyRent: number;        // 家賃収入（月額）
   occupancyRate: number;      // 入居率（%）
+  occupancyDetailEnabled?: boolean; // 入居率の詳細モード
+  occupancyRateYear1to2?: number;   // 入居率 1〜2年目（%）
+  occupancyRateYear3to10?: number;  // 入居率 3〜10年目（%）
+  occupancyRateYear11to20?: number; // 入居率 11〜20年目（%）
+  occupancyRateYear20to30?: number; // 入居率 20〜30年目（%）
+  occupancyRateYear30to40?: number; // 入居率 30〜40年目（%）
   rentDeclineRate: number;    // 家賃下落率（2年ごと/%）
   unitCount: number;          // 戸数（清掃・管理の目安）
   cleaningVisitsPerMonth: number; // 清掃回数（月）
   operatingExpenseRate: number; // 運営経費率（%）
   oerMode: OerMode;           // 運営経費の計算モード
+  oerTemplateType?: OerPropertyType; // 運営経費テンプレのタイプ
+  oerTemplateAgeBand?: OerAgeBand; // 運営経費テンプレの築年数帯
   oerRateItems: OerRateItem[]; // 運営経費(率)
   oerFixedItems: OerFixedItem[]; // 運営経費(固定)
   oerEventItems: OerEventItem[]; // 運営経費(イベント)

@@ -51,13 +51,14 @@ import {
   onSnapshot,
   orderBy,
   query,
+  limit,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "../utils/firebase";
-import { Building2, Calculator, Save, UserCircle } from "lucide-react";
+import { Building2, Calculator, History, Save, UserCircle } from "lucide-react";
 import { applyEstimatedDefaultsWithMeta } from "../utils/estimates";
 
 // デフォルトの初期値（空の状態）
@@ -69,6 +70,8 @@ const DEFAULT_INPUT: PropertyInput = {
   buildingEvaluationRate: 0,
   landTaxReductionRate: 0,
   propertyTaxRate: 1.7,
+  newBuildTaxReductionYears: 3,
+  newBuildTaxReductionRate: 50,
   structure: "RC",
   buildingAge: 0,
   enableEquipmentSplit: false,
@@ -86,6 +89,12 @@ const DEFAULT_INPUT: PropertyInput = {
   loanDuration: 0,
   monthlyRent: 0,
   occupancyRate: 0,
+  occupancyDetailEnabled: false,
+  occupancyRateYear1to2: 0,
+  occupancyRateYear3to10: 0,
+  occupancyRateYear11to20: 0,
+  occupancyRateYear20to30: 0,
+  occupancyRateYear30to40: 0,
   rentDeclineRate: 0,
   unitCount: 0,
   cleaningVisitsPerMonth: 0,
@@ -176,6 +185,16 @@ type SavedSimulation = {
   name: string;
   createdAt: Date | null;
   input: PropertyInput;
+};
+
+type AnalysisRunItem = {
+  id: string;
+  url: string;
+  listing: ImportHistoryItem["listing"];
+  input: PropertyInput;
+  aiMessages: { role: "user" | "assistant"; content: string }[];
+  createdAt: Date | null;
+  updatedAt: Date | null;
 };
 
 type SortableCardProps = {
@@ -542,6 +561,11 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [analysisRuns, setAnalysisRuns] = useState<AnalysisRunItem[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyView, setHistoryView] = useState<"latest" | "all">("latest");
   const [leftOrder, setLeftOrder] = useState(DEFAULT_LEFT_ORDER);
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
@@ -679,6 +703,60 @@ export default function Home() {
       },
       (error) =>
         setAuthError(formatFirebaseError(error, "保存済みデータの取得に失敗しました。"))
+    );
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setAnalysisRuns([]);
+      setHistoryError(null);
+      return;
+    }
+    const q = query(
+      collection(db, "analysisRuns"),
+      where("userId", "==", user.uid),
+      orderBy("updatedAt", "desc"),
+      limit(50)
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const runs = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data() as {
+            url?: string;
+            listing?: ImportHistoryItem["listing"];
+            input?: PropertyInput;
+            aiMessages?: { role: "user" | "assistant"; content: string }[];
+            createdAt?: { toDate?: () => Date };
+            updatedAt?: { toDate?: () => Date };
+          };
+          const safeMessages = Array.isArray(data.aiMessages)
+            ? data.aiMessages.filter(
+                (msg) =>
+                  msg &&
+                  typeof msg === "object" &&
+                  typeof msg.role === "string" &&
+                  typeof msg.content === "string"
+              )
+            : [];
+          return {
+            id: docSnap.id,
+            url: data.url ?? "",
+            listing: data.listing ?? null,
+            input: { ...DEFAULT_INPUT, ...(data.input ?? {}) },
+            aiMessages: safeMessages as { role: "user" | "assistant"; content: string }[],
+            createdAt: data.createdAt?.toDate?.() ?? null,
+            updatedAt: data.updatedAt?.toDate?.() ?? null,
+          };
+        });
+        setAnalysisRuns(runs);
+        setHistoryError(null);
+      },
+      (error) => {
+        console.warn("analysis runs read failed", error);
+        setHistoryError(formatFirebaseError(error, "履歴の取得に失敗しました。"));
+      }
     );
     return () => unsubscribe();
   }, [user]);
@@ -873,6 +951,47 @@ export default function Home() {
     setFormVersion((prev) => prev + 1);
   };
 
+  const handleAnalysisRunSelect = (run: AnalysisRunItem) => {
+    const nextInput = { ...DEFAULT_INPUT, ...(run.input ?? {}) };
+    setInputData(nextInput);
+    setAutoFilledKeys([]);
+    if (run.url) {
+      const id = run.url;
+      setImportHistory((prev) => {
+        const nextItem: ImportHistoryItem = {
+          id,
+          url: run.url,
+          listing: run.listing ?? null,
+          input: nextInput,
+          autoFilled: [],
+          createdAt: run.updatedAt?.getTime?.() ?? Date.now(),
+        };
+        const existingIndex = prev.findIndex((item) => item.id === id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next.splice(existingIndex, 1, nextItem);
+          return next;
+        }
+        return [nextItem, ...prev].slice(0, 5);
+      });
+      setSelectedImportId(id);
+    } else {
+      setSelectedImportId(null);
+    }
+    setHasImportResult(true);
+    setHasViewedResults(false);
+    setHasCompletedSteps(false);
+    setSelectedYear(1);
+    setAiError(null);
+    setAiMessages(run.aiMessages ?? []);
+    setAiCacheHit((run.aiMessages ?? []).length > 0);
+    setPendingAiPromptId(null);
+    analysisRunIdRef.current = run.id;
+    analysisRunUrlRef.current = run.url ?? null;
+    setFormVersion((prev) => prev + 1);
+    setHistoryOpen(false);
+  };
+
   const handleImportClear = () => {
     setImportHistory([]);
     setSelectedImportId(null);
@@ -895,6 +1014,36 @@ export default function Home() {
     analysisRunUrlRef.current = null;
     setFormVersion((prev) => prev + 1);
   };
+
+  const filteredHistory = useMemo(() => {
+    const queryText = historyQuery.trim().toLowerCase();
+    if (!queryText) return analysisRuns;
+    return analysisRuns.filter((run) => {
+      const candidates = [
+        run.listing?.title,
+        run.listing?.propertyName,
+        run.listing?.propertyType,
+        run.listing?.address,
+        run.url,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+      return candidates.some((value) => value.includes(queryText));
+    });
+  }, [analysisRuns, historyQuery]);
+
+  const displayHistory = useMemo(() => {
+    if (historyView === "all") return filteredHistory;
+    const seen = new Set<string>();
+    const deduped: AnalysisRunItem[] = [];
+    filteredHistory.forEach((run) => {
+      const key = run.url ? normalizeUrl(run.url) : run.id;
+      if (seen.has(key)) return;
+      seen.add(key);
+      deduped.push(run);
+    });
+    return deduped;
+  }, [filteredHistory, historyView]);
 
   const getCacheDocRef = (url: string) => {
     if (!user) return null;
@@ -2739,6 +2888,16 @@ export default function Home() {
         <div className="header-right">
           <div className="app-note">減価償却・デッドクロス解析エンジン搭載</div>
           <div className="header-actions">
+            <button
+              type="button"
+              className="history-button"
+              onClick={() => setHistoryOpen((prev) => !prev)}
+              aria-expanded={historyOpen}
+              aria-controls="history-drawer"
+              title="履歴"
+            >
+              <History size={20} aria-hidden />
+            </button>
             <div className="save-menu" ref={saveMenuRef}>
               <button
                 type="button"
@@ -3054,6 +3213,102 @@ export default function Home() {
               </>
             ) : null}
           </div>
+        </aside>
+
+        {historyOpen ? (
+          <button
+            type="button"
+            className="history-backdrop"
+            onClick={() => setHistoryOpen(false)}
+            aria-label="履歴を閉じる"
+          />
+        ) : null}
+        <aside
+          id="history-drawer"
+          className={`history-drawer${historyOpen ? " is-open" : ""}`}
+          aria-hidden={!historyOpen}
+        >
+          <div className="history-drawer-head">
+            <div>
+              <div className="history-title">検索履歴</div>
+              <div className="history-subtitle">ログイン中の解析結果</div>
+            </div>
+            <button type="button" className="section-toggle" onClick={() => setHistoryOpen(false)}>
+              ▼ 閉じる
+            </button>
+          </div>
+          {user ? (
+            <>
+              <div className="history-search">
+                <input
+                  type="search"
+                  placeholder="物件名・URLで検索"
+                  value={historyQuery}
+                  onChange={(event) => setHistoryQuery(event.target.value)}
+                />
+                <span className="history-count">{displayHistory.length}件</span>
+              </div>
+              <div className="history-toggle">
+                <button
+                  type="button"
+                  className={`history-toggle-btn${historyView === "latest" ? " active" : ""}`}
+                  onClick={() => setHistoryView("latest")}
+                >
+                  最新のみ
+                </button>
+                <button
+                  type="button"
+                  className={`history-toggle-btn${historyView === "all" ? " active" : ""}`}
+                  onClick={() => setHistoryView("all")}
+                >
+                  すべて
+                </button>
+              </div>
+              {historyError ? <div className="auth-error">{historyError}</div> : null}
+              {displayHistory.length === 0 ? (
+                <div className="form-note">履歴がまだありません。</div>
+              ) : (
+                <div className="history-list">
+                  {displayHistory.map((run) => {
+                    const label =
+                      run.listing?.title ??
+                      run.listing?.propertyName ??
+                      run.listing?.propertyType ??
+                      "物件";
+                    const isImage = run.url.startsWith("image:");
+                    const dateLabel = run.updatedAt ?? run.createdAt;
+                    return (
+                      <button
+                        key={run.id}
+                        type="button"
+                        className="history-item"
+                        onClick={() => handleAnalysisRunSelect(run)}
+                      >
+                        <div className="history-item-head">
+                          <span className={`history-tag${isImage ? " image" : ""}`}>
+                            {isImage ? "画像" : "URL"}
+                          </span>
+                          <span className="history-item-title">{label}</span>
+                        </div>
+                        {run.listing?.address ? (
+                          <div className="history-item-meta">{run.listing.address}</div>
+                        ) : (
+                          <div className="history-item-meta">
+                            {isImage ? "画像解析" : run.url}
+                          </div>
+                        )}
+                        <div className="history-item-foot">
+                          {dateLabel ? dateLabel.toLocaleDateString() : "日付不明"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="form-note">ログインすると履歴が表示されます。</div>
+          )}
         </aside>
       </div>
     </main>

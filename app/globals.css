@@ -170,7 +170,26 @@ a {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+.history-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 16px rgba(18, 22, 28, 0.12);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
 .save-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(18, 22, 28, 0.16);
+}
+
+.history-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 10px 18px rgba(18, 22, 28, 0.16);
 }
@@ -983,6 +1002,166 @@ a {
   animation-delay: 0.3s;
 }
 
+.history-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.25);
+  border: none;
+  padding: 0;
+  margin: 0;
+  z-index: 45;
+}
+
+.history-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(360px, 92vw);
+  background: #ffffff;
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 30px rgba(15, 23, 42, 0.2);
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  z-index: 46;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+}
+
+.history-drawer.is-open {
+  transform: translateX(0);
+}
+
+.history-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+
+.history-subtitle {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-search input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #fdfbf6;
+}
+
+.history-count {
+  font-size: 11px;
+  color: var(--ink-3);
+  background: #f7f2e8;
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+
+.history-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.history-toggle-btn {
+  border: 1px solid var(--line);
+  background: #fffaf0;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.history-toggle-btn.active {
+  background: #0f766e;
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.history-item {
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fffaf0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.history-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.history-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-item-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-tag {
+  font-size: 10px;
+  color: #374151;
+  background: #e9e5dc;
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+.history-tag.image {
+  background: #e0f2fe;
+  color: #0f4c81;
+}
+
+.history-item-meta {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-foot {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
 .ai-message {
   padding: 8px 10px;
   border-radius: 12px;
@@ -1138,7 +1317,7 @@ a {
 
 .form-input-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 320px) auto;
+  grid-template-columns: minmax(300px, 360px) auto;
   gap: 18px;
   align-items: start;
   width: max-content;
@@ -1155,8 +1334,8 @@ a {
 }
 
 .form-input-left {
-  min-width: 280px;
-  max-width: 320px;
+  min-width: 300px;
+  max-width: 360px;
 }
 
 .form-input-right {
@@ -1166,7 +1345,7 @@ a {
 
 .form-input-right-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(320px, 340px));
+  grid-template-columns: repeat(3, minmax(340px, 380px));
   gap: 16px;
   align-items: start;
   width: max-content;
@@ -1196,7 +1375,7 @@ a {
 }
 
 .form-panel {
-  flex: 0 0 360px;
+  flex: 0 0 380px;
   min-width: 0;
   width: 100%;
 }
@@ -1209,7 +1388,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  flex: 0 0 360px;
+  flex: 0 0 380px;
 }
 
 .form-panel-stack .form-panel {
@@ -1374,7 +1553,7 @@ a {
 
 .form-grid.compact > div {
   display: grid;
-  grid-template-columns: minmax(180px, 1.8fr) minmax(0, 100px);
+  grid-template-columns: minmax(200px, 1.8fr) minmax(0, 120px);
   align-items: start;
   gap: 6px 10px;
   min-width: 0;
@@ -1387,22 +1566,22 @@ a {
 .form-grid.compact input[type="number"],
 .form-grid.compact input[type="text"],
 .form-grid.compact select {
-  max-width: 100px;
+  max-width: 120px;
 }
 
 .vacancy-grid > div {
-  grid-template-columns: minmax(210px, 2fr) minmax(0, 150px);
+  grid-template-columns: minmax(220px, 2fr) minmax(0, 170px);
 }
 
 .vacancy-grid input[type="number"],
 .vacancy-grid select {
-  max-width: 150px;
+  max-width: 170px;
   width: 100%;
 }
 
 .form-grid:not(.oer-top-grid):not(.oer-leasing-grid) input[type="number"],
 .form-grid:not(.oer-top-grid):not(.oer-leasing-grid) select {
-  max-width: 100px;
+  max-width: 120px;
 }
 
 .form-grid.compact > div > label,
@@ -1431,12 +1610,12 @@ a {
 
 .form-input-left .form-grid.oer-top-grid > div,
 .form-input-left .form-grid.two-col.oer-top-grid > div {
-  grid-template-columns: minmax(170px, 1.8fr) minmax(0, 100px);
+  grid-template-columns: minmax(200px, 1.8fr) minmax(0, 120px);
 }
 
 .form-input-left .form-grid.oer-top-grid input[type="number"],
 .form-input-left .form-grid.oer-top-grid select {
-  max-width: 100px;
+  max-width: 120px;
 }
 
 .form-grid.oer-top-grid input[type="number"],
@@ -1739,12 +1918,9 @@ a {
   gap: 8px;
 }
 
-.oer-box-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
+.oer-box-head .input-label {
+  font-size: 10px;
+  font-weight: 600;
   color: var(--ink-2);
 }
 
