@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PropertyInput, StructureType } from "../utils/types";
 import {
   getSuggestedBuildingRatio,
@@ -199,8 +199,11 @@ export const RakumachiImporter = ({
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [cacheHit, setCacheHit] = useState(false);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<{ id: string; url: string; name: string }[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<
+    { id: string; url: string; name: string; type: string }[]
+  >([]);
   const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({ extracted: false, manual: false });
   const [showDetails, setShowDetails] = useState(false);
@@ -215,7 +218,7 @@ export const RakumachiImporter = ({
     setImageFiles((prev) => {
       const next = [...prev, ...files].slice(0, IMAGE_LIMIT);
       if (next.length < prev.length + files.length) {
-        setError(`画像は最大${IMAGE_LIMIT}枚までです。`);
+        setError(`ファイルは最大${IMAGE_LIMIT}件までです。`);
       }
       return next;
     });
@@ -235,6 +238,7 @@ export const RakumachiImporter = ({
       id: `${file.name}-${file.size}-${file.lastModified}`,
       url: URL.createObjectURL(file),
       name: file.name,
+      type: file.type,
     }));
     setImagePreviews(nextPreviews);
     return () => {
@@ -573,8 +577,8 @@ export const RakumachiImporter = ({
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
-      file.type.startsWith("image/")
+    const files = Array.from(event.dataTransfer.files ?? []).filter(
+      (file) => file.type.startsWith("image/") || file.type.includes("pdf")
     );
     appendImageFiles(files);
   };
@@ -586,6 +590,16 @@ export const RakumachiImporter = ({
 
   const handleDragLeave = () => {
     setIsDragging(false);
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []).filter(
+      (file) => file.type.startsWith("image/") || file.type.includes("pdf")
+    );
+    if (files.length > 0) {
+      appendImageFiles(files);
+    }
+    event.target.value = "";
   };
 
   return (
@@ -628,19 +642,41 @@ export const RakumachiImporter = ({
           }}
           tabIndex={0}
           role="button"
-          aria-label="スクショをドロップして解析"
+          aria-label="スクショまたはPDFをドロップして解析"
         >
-          <div className="import-drop-title">スクショをここにドロップ</div>
+          <div className="import-drop-title">スクショ・PDFをここにドロップ</div>
           <div className="import-drop-note">または Cmd+V / Ctrl+V で貼り付け</div>
         </div>
+        <div className="import-upload-row">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,application/pdf"
+            multiple
+            className="import-file-input"
+            onChange={handleFileSelect}
+          />
+          <button
+            type="button"
+            className="import-upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+          >
+            画像/PDFを選択
+          </button>
+        </div>
         {imageFiles.length > 0 ? (
-          <div className="form-note">画像 {imageFiles.length}枚を解析します。</div>
+          <div className="form-note">ファイル {imageFiles.length}件を解析します。</div>
         ) : null}
         {imagePreviews.length > 0 ? (
           <div className="import-thumbs">
             {imagePreviews.map((item) => (
               <div key={item.id} className="import-thumb" title={item.name}>
-                <img src={item.url} alt={item.name} />
+                {item.type.includes("pdf") ? (
+                  <div className="import-thumb-file">PDF</div>
+                ) : (
+                  <img src={item.url} alt={item.name} />
+                )}
                 <button
                   type="button"
                   className="import-thumb-remove"

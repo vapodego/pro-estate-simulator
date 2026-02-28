@@ -11,6 +11,7 @@ export const LEGAL_USEFUL_LIFE: Record<StructureType, number> = {
 };
 
 export type VacancyModelType = 'FIXED' | 'CYCLE' | 'PROBABILITY';
+export type LoanCoverageMode = 'PRICE_ONLY' | 'PRICE_AND_INITIAL';
 
 export interface RepairEvent {
   year: number;
@@ -58,6 +59,7 @@ export interface PropertyInput {
   buildingEvaluationRate: number; // 建物評価率（%）
   landTaxReductionRate: number; // 住宅用地特例（%）
   propertyTaxRate: number;    // 固定資産税率（%）
+  newBuildTaxReductionEnabled: boolean; // 新築軽減措置の適用有無
   newBuildTaxReductionYears: number; // 新築軽減の年数（年）
   newBuildTaxReductionRate: number; // 新築軽減率（建物課税標準の%）
   structure: StructureType;   // 構造
@@ -77,6 +79,7 @@ export interface PropertyInput {
   acquisitionLandReductionRate: number; // 取得税の土地評価圧縮率（%）
 
   // 融資設定
+  loanCoverageMode: LoanCoverageMode; // 融資対象（物件価格のみ / 物件価格+初期費用）
   equityRatio: number;       // 自己資金（%）
   loanAmount: number;         // 借入金額
   interestRate: number;       // 金利（%）

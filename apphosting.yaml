@@ -17,3 +17,7 @@ env:
     secret: geminiApiKey
   - variable: SCRAPER_API_KEY
     secret: scraperApiKey
+  - variable: GOOGLE_MAPS_API_KEY
+    secret: googleMapsApiKey
+  - variable: ESTAT_APP_ID
+    secret: estatAppId

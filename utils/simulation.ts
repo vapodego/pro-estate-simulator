@@ -29,6 +29,7 @@ const calculatePropertyTax = (params: {
   buildingEvaluationRate: number;
   landTaxReductionRate: number;
   propertyTaxRate: number;
+  newBuildTaxReductionEnabled: boolean;
   buildingAge: number;
   newBuildTaxReductionYears: number;
   newBuildTaxReductionRate: number;
@@ -49,6 +50,7 @@ const calculatePropertyTax = (params: {
     Number.isFinite(params.propertyTaxRate) && params.propertyTaxRate > 0
       ? params.propertyTaxRate
       : 1.7;
+  const safeReductionEnabled = params.newBuildTaxReductionEnabled === true;
   const safeBuildingAge = Number.isFinite(params.buildingAge)
     ? Math.max(0, Math.floor(params.buildingAge))
     : 0;
@@ -66,7 +68,7 @@ const calculatePropertyTax = (params: {
   const buildingDecayRate = 1.5;
   const buildingDecayFactor = Math.max(0, 1 - (buildingDecayRate / 100) * ageAtYear);
   const buildingEvaluation = buildingPrice * (safeBuildingRate / 100) * buildingDecayFactor;
-  const isReductionPeriod = safeReductionYears > 0 && ageAtYear < safeReductionYears;
+  const isReductionPeriod = safeReductionEnabled && safeReductionYears > 0 && ageAtYear < safeReductionYears;
   const buildingTaxable = isReductionPeriod
     ? buildingEvaluation * (safeReductionRate / 100)
     : buildingEvaluation;
@@ -235,6 +237,7 @@ export const calculateSimulation = (
       buildingEvaluationRate: input.buildingEvaluationRate,
       landTaxReductionRate: input.landTaxReductionRate,
       propertyTaxRate: input.propertyTaxRate,
+      newBuildTaxReductionEnabled: input.newBuildTaxReductionEnabled,
       buildingAge: input.buildingAge,
       newBuildTaxReductionYears: input.newBuildTaxReductionYears,
       newBuildTaxReductionRate: input.newBuildTaxReductionRate,

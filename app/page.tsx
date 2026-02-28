@@ -70,6 +70,7 @@ const DEFAULT_INPUT: PropertyInput = {
   buildingEvaluationRate: 0,
   landTaxReductionRate: 0,
   propertyTaxRate: 1.7,
+  newBuildTaxReductionEnabled: false,
   newBuildTaxReductionYears: 3,
   newBuildTaxReductionRate: 50,
   structure: "RC",
@@ -83,6 +84,7 @@ const DEFAULT_INPUT: PropertyInput = {
   registrationCostRate: 0,
   acquisitionTaxRate: 0,
   acquisitionLandReductionRate: 0,
+  loanCoverageMode: "PRICE_ONLY",
   equityRatio: 0,
   loanAmount: 0,
   interestRate: 0,
@@ -137,6 +139,546 @@ const DEFAULT_INPUT: PropertyInput = {
   scenarioOccupancyDeclineDelta: 0,
 };
 
+type InvestmentDemandTrend = "UP" | "FLAT" | "DOWN" | "UNKNOWN";
+type InvestmentTargetFit = "HIGH" | "MID" | "LOW" | "UNKNOWN";
+type InvestmentConvenience = "HIGH" | "MID" | "LOW" | "UNKNOWN";
+type InvestmentHazardRisk = "NONE" | "LOW" | "HIGH" | "UNKNOWN";
+type InvestmentCompetition = "LOW" | "MID" | "HIGH" | "UNKNOWN";
+type PortySigmaKey = "minus1Sigma" | "baseSigma" | "plus1Sigma";
+type PortyFloorKey = "floor1" | "floor2" | "floor3";
+type PortyRentRow = Record<PortySigmaKey, number | null>;
+type PortyRentByFloor = Record<PortyFloorKey, PortyRentRow>;
+
+type InvestmentInput = {
+  demandTrend: InvestmentDemandTrend;
+  targetFit: InvestmentTargetFit;
+  walkMinutes: number | "";
+  convenience: InvestmentConvenience;
+  hazardRisk: InvestmentHazardRisk;
+  rentGapPercent: number | "";
+  competitionLevel: InvestmentCompetition;
+  fieldAdjustment: number;
+};
+
+type PurchaseChecklistItem = {
+  id: string;
+  label: string;
+};
+
+type PurchaseChecklistSection = {
+  id: string;
+  title: string;
+  items: PurchaseChecklistItem[];
+};
+
+type PurchaseChecklistMap = Record<string, boolean>;
+
+const DEFAULT_INVESTMENT_INPUT: InvestmentInput = {
+  demandTrend: "UNKNOWN",
+  targetFit: "UNKNOWN",
+  walkMinutes: "",
+  convenience: "UNKNOWN",
+  hazardRisk: "UNKNOWN",
+  rentGapPercent: "",
+  competitionLevel: "UNKNOWN",
+  fieldAdjustment: 0,
+};
+
+type ExtraInfoInput = {
+  memo: string;
+  purchaseChecklist: PurchaseChecklistMap;
+  comparableText: string;
+  portyRentByFloor: PortyRentByFloor;
+  populationText: string;
+  ridershipText: string;
+  vacancyText: string;
+  landPriceText: string;
+  hazard: HazardInput;
+  locationChecklist: LocationChecklistInput;
+};
+
+type LocationManualLevel = "UNKNOWN" | "GOOD" | "CAUTION" | "BAD";
+
+type LocationManualChecks = {
+  slopeAndSidewalk: LocationManualLevel;
+  nightLightingSafety: LocationManualLevel;
+  smellVibration: LocationManualLevel;
+  litterGraffiti: LocationManualLevel;
+  dangerousRoads: LocationManualLevel;
+};
+
+type LocationPointSummary = {
+  name: string | null;
+  distanceMeters: number | null;
+  durationMinutes: number | null;
+  line?: string | null;
+};
+
+type LocationChecklistAuto = {
+  fetchedAt: string;
+  normalizedAddress: string | null;
+  originLat: number | null;
+  originLng: number | null;
+  station: LocationPointSummary | null;
+  busStop: LocationPointSummary | null;
+  convenienceStore: LocationPointSummary | null;
+  supermarket: LocationPointSummary | null;
+  hospital: LocationPointSummary | null;
+  pharmacy: LocationPointSummary | null;
+  stationOptions?: LocationPointSummary[];
+  busStopOptions?: LocationPointSummary[];
+  convenienceOptions?: LocationPointSummary[];
+  supermarketOptions?: LocationPointSummary[];
+  convenienceCount800m: number | null;
+  supermarketCount800m: number | null;
+  hospitalCount800m: number | null;
+  pharmacyCount800m: number | null;
+  schoolCount800m: number | null;
+  parkCount800m: number | null;
+  cemeteryCount1500m: number | null;
+  wasteFacilityCount1500m: number | null;
+  factoryCount1500m: number | null;
+};
+
+type LocationChecklistInput = {
+  address: string;
+  auto: LocationChecklistAuto | null;
+  manual: LocationManualChecks;
+};
+
+type HazardTypeKey = "flood" | "collapse" | "debrisFlow" | "landslide";
+
+type HazardSelection = {
+  enabled: boolean;
+  severity: string;
+};
+
+type HazardInput = Record<HazardTypeKey, HazardSelection>;
+
+const FLOOD_SEVERITY_OPTIONS = [
+  { value: "20m_over", label: "20m〜", penalty: 15 },
+  { value: "10m_20m", label: "10m〜20m", penalty: 12 },
+  { value: "5m_10m", label: "5m〜10m", penalty: 10 },
+  { value: "3m_5m", label: "3m〜5m", penalty: 8 },
+  { value: "0_5m_3m", label: "0.5m〜3m", penalty: 6 },
+  { value: "0_5m_1m", label: "0.5m〜1m", penalty: 4 },
+  { value: "0m_0_5m", label: "〜0.5m", penalty: 2 },
+  { value: "0m_0_3m", label: "〜0.3m", penalty: 1 },
+] as const;
+
+const SEDIMENT_SEVERITY_OPTIONS = [
+  { value: "special", label: "特別警戒区域", penalty: 8 },
+  { value: "warning", label: "警戒区域", penalty: 4 },
+] as const;
+
+const HAZARD_TYPE_LABELS: Record<HazardTypeKey, string> = {
+  flood: "洪水",
+  collapse: "土砂（崩壊）",
+  debrisFlow: "土砂（土石流）",
+  landslide: "土砂（地すべり）",
+};
+
+const DEFAULT_HAZARD_INPUT: HazardInput = {
+  flood: { enabled: false, severity: FLOOD_SEVERITY_OPTIONS[0].value },
+  collapse: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
+  debrisFlow: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
+  landslide: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
+};
+
+const DEFAULT_LOCATION_MANUAL_CHECKS: LocationManualChecks = {
+  slopeAndSidewalk: "UNKNOWN",
+  nightLightingSafety: "UNKNOWN",
+  smellVibration: "UNKNOWN",
+  litterGraffiti: "UNKNOWN",
+  dangerousRoads: "UNKNOWN",
+};
+
+const cloneLocationManualChecks = (
+  source: LocationManualChecks = DEFAULT_LOCATION_MANUAL_CHECKS
+): LocationManualChecks => ({
+  slopeAndSidewalk: source.slopeAndSidewalk,
+  nightLightingSafety: source.nightLightingSafety,
+  smellVibration: source.smellVibration,
+  litterGraffiti: source.litterGraffiti,
+  dangerousRoads: source.dangerousRoads,
+});
+
+const createDefaultLocationChecklist = (): LocationChecklistInput => ({
+  address: "",
+  auto: null,
+  manual: cloneLocationManualChecks(),
+});
+
+const LIFULL_OWNER_URL = "https://toushi.homes.co.jp/owner";
+
+const PURCHASE_CHECKLIST_SECTIONS: PurchaseChecklistSection[] = [
+  {
+    id: "population_planning",
+    title: "1. 周辺人口・施設の中長期計画の確認",
+    items: [
+      { id: "pop_projection_10y", label: "自治体の人口推計（10年後まで）を確認したか。" },
+      { id: "univ_company_move_plan", label: "大学・企業の統合・移転計画を調べたか。" },
+      { id: "public_transport_plan", label: "公共交通機関の整備計画はあるか。" },
+      { id: "commercial_open_close_plan", label: "商業施設の開発・撤退予定を把握しているか。" },
+    ],
+  },
+  {
+    id: "tenant_diversity",
+    title: "2. 入居者属性の偏りと多様性のチェック",
+    items: [
+      { id: "worker_age_1km", label: "半径1km以内の就業者数・年齢構成を確認したか。" },
+      {
+        id: "multi_target_location",
+        label:
+          "複数の入居者層が見込める立地条件か（特定の大学や工場などの単一ターゲットに依存していないか）。",
+      },
+      { id: "competitor_tenant_attr", label: "競合物件の入居者属性を調査したか。" },
+      { id: "broker_demand_hearing", label: "賃貸仲介会社からの需要ヒアリングを行ったか。" },
+      { id: "liful_homes_rental_demand", label: "LIFULL HOME'Sで賃貸需要の確認をしたか。" },
+      {
+        id: "liful_homes_layout_supply_demand",
+        label:
+          "LIFULL HOME'Sで間取りの需給バランスを確認したか。（「入居希望者の検索条件」が「掲載物件の状況」より多い割合か）",
+      },
+      {
+        id: "liful_homes_station_walk_supply_demand",
+        label: "LIFULL HOME'Sで賃貸入居者の希望する駅徒歩の需給を確認したか。",
+      },
+    ],
+  },
+  {
+    id: "cashflow_scenario",
+    title: "3. 空室・維持コスト含めたキャッシュフロー作成",
+    items: [
+      {
+        id: "pessimistic_occupancy_cf",
+        label:
+          "入居率60〜80％などの悲観的なシナリオを含めた収支シミュレーションを行ったか。",
+      },
+      {
+        id: "interest_shock_cf",
+        label: "金利上昇リスク（＋1％、＋2％など）を考慮した返済額の変動を計算したか。",
+      },
+      {
+        id: "fixed_cost_net_income",
+        label: "税金・保険料・管理費などの固定費を算出し、実質収入を把握しているか。",
+      },
+    ],
+  },
+  {
+    id: "maintenance_plan",
+    title: "4. メンテナンス積立と想定修繕時期の記録",
+    items: [
+      {
+        id: "repair_schedule_by_age",
+        label: "築年数別の修繕計画を策定し、設備の更新時期を把握しているか。",
+      },
+      {
+        id: "monthly_repair_reserve",
+        label: "修繕のための月額積立金額（家賃の5〜12％程度）を適切に設定しているか。",
+      },
+      { id: "emergency_repair_fund", label: "緊急修繕に対応できる資金を確保しているか。" },
+    ],
+  },
+  {
+    id: "resale_value",
+    title: "5. リセールバリュー（売却市場）の見極め",
+    items: [
+      {
+        id: "trade_price_5y",
+        label: "同エリアにおける過去5年間の取引価格推移を確認したか。",
+      },
+      { id: "pop_land_corr", label: "人口動態と地価の相関性を分析したか。" },
+      { id: "investor_demand_forecast", label: "投資家需要の将来予測を立てているか。" },
+      { id: "multi_exit_patterns", label: "出口戦略（売却）の複数パターンを検討しているか。" },
+    ],
+  },
+  {
+    id: "on_site_finance_rules",
+    title: "6. 現地調査と資金計画の基本ルール（最終確認）",
+    items: [
+      {
+        id: "site_visit_3times",
+        label:
+          "現地調査は最低3回、異なる時間帯に実施し、実際の生活環境を体感したか。",
+      },
+      { id: "ltv_under_80", label: "借入比率は物件価格の80％以下に抑えられているか。" },
+      {
+        id: "vacancy_buffer_6to12m",
+        label: "少なくとも半年〜1年分の空室損失に対応できる自己資金を確保しているか。",
+      },
+    ],
+  },
+];
+
+const createDefaultPurchaseChecklist = (): PurchaseChecklistMap => {
+  const checklist: PurchaseChecklistMap = {};
+  PURCHASE_CHECKLIST_SECTIONS.forEach((section) => {
+    section.items.forEach((item) => {
+      checklist[item.id] = false;
+    });
+  });
+  return checklist;
+};
+
+const clonePurchaseChecklist = (
+  source?: Partial<Record<string, unknown>>
+): PurchaseChecklistMap => {
+  const base = createDefaultPurchaseChecklist();
+  if (!source) return base;
+  Object.keys(base).forEach((id) => {
+    const value = source[id];
+    if (typeof value === "boolean") {
+      base[id] = value;
+    }
+  });
+  return base;
+};
+
+const renderPurchaseChecklistLabel = (label: string): ReactNode => {
+  const keyword = "LIFULL HOME'S";
+  const keywordIndex = label.indexOf(keyword);
+  if (keywordIndex < 0) return label;
+  const before = label.slice(0, keywordIndex);
+  const after = label.slice(keywordIndex + keyword.length);
+  return (
+    <>
+      {before}
+      <a
+        className="extra-info-inline-link"
+        href={LIFULL_OWNER_URL}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {keyword}
+      </a>
+      {after}
+    </>
+  );
+};
+
+const createDefaultPortyRentByFloor = (): PortyRentByFloor => ({
+  floor1: { minus1Sigma: null, baseSigma: null, plus1Sigma: null },
+  floor2: { minus1Sigma: null, baseSigma: null, plus1Sigma: null },
+  floor3: { minus1Sigma: null, baseSigma: null, plus1Sigma: null },
+});
+
+const clonePortyRentByFloor = (source?: PortyRentByFloor): PortyRentByFloor => ({
+  floor1: {
+    minus1Sigma: source?.floor1?.minus1Sigma ?? null,
+    baseSigma: source?.floor1?.baseSigma ?? null,
+    plus1Sigma: source?.floor1?.plus1Sigma ?? null,
+  },
+  floor2: {
+    minus1Sigma: source?.floor2?.minus1Sigma ?? null,
+    baseSigma: source?.floor2?.baseSigma ?? null,
+    plus1Sigma: source?.floor2?.plus1Sigma ?? null,
+  },
+  floor3: {
+    minus1Sigma: source?.floor3?.minus1Sigma ?? null,
+    baseSigma: source?.floor3?.baseSigma ?? null,
+    plus1Sigma: source?.floor3?.plus1Sigma ?? null,
+  },
+});
+
+const cloneHazardInput = (source: HazardInput = DEFAULT_HAZARD_INPUT): HazardInput => ({
+  flood: { ...source.flood },
+  collapse: { ...source.collapse },
+  debrisFlow: { ...source.debrisFlow },
+  landslide: { ...source.landslide },
+});
+
+const createDefaultExtraInfo = (): ExtraInfoInput => ({
+  memo: "",
+  purchaseChecklist: createDefaultPurchaseChecklist(),
+  comparableText: "",
+  portyRentByFloor: createDefaultPortyRentByFloor(),
+  populationText: "",
+  ridershipText: "",
+  vacancyText: "",
+  landPriceText: "",
+  hazard: cloneHazardInput(),
+  locationChecklist: createDefaultLocationChecklist(),
+});
+
+const DEFAULT_EXTRA_INFO: ExtraInfoInput = createDefaultExtraInfo();
+
+const LOCATION_MANUAL_LABELS: Record<keyof LocationManualChecks, string> = {
+  slopeAndSidewalk: "坂道・歩道状況",
+  nightLightingSafety: "夜間の明るさ・安全性",
+  smellVibration: "臭い・振動",
+  litterGraffiti: "落書き・ゴミ散乱",
+  dangerousRoads: "危険な道路・交差点",
+};
+
+const LOCATION_MANUAL_LEVEL_OPTIONS: Array<{ value: LocationManualLevel; label: string }> = [
+  { value: "UNKNOWN", label: "未確認" },
+  { value: "GOOD", label: "問題なし" },
+  { value: "CAUTION", label: "注意" },
+  { value: "BAD", label: "懸念あり" },
+];
+
+const PORTY_FLOOR_LABELS: Record<PortyFloorKey, string> = {
+  floor1: "1階",
+  floor2: "2階",
+  floor3: "3階",
+};
+
+const PORTY_SIGMA_COLUMNS: Array<{ key: PortySigmaKey; label: string }> = [
+  { key: "minus1Sigma", label: "-1σ" },
+  { key: "baseSigma", label: "0" },
+  { key: "plus1Sigma", label: "+1σ" },
+];
+
+const normalizeExtraInfo = (value: unknown): ExtraInfoInput => {
+  if (!value || typeof value !== "object") {
+    return createDefaultExtraInfo();
+  }
+  const source = value as Partial<Record<keyof ExtraInfoInput, unknown>>;
+  const rawPurchaseChecklist =
+    source.purchaseChecklist && typeof source.purchaseChecklist === "object"
+      ? (source.purchaseChecklist as Partial<Record<string, unknown>>)
+      : undefined;
+  const hazardSource =
+    source.hazard && typeof source.hazard === "object"
+      ? (source.hazard as Partial<Record<HazardTypeKey, unknown>>)
+      : {};
+  const rawLocationChecklist =
+    source.locationChecklist && typeof source.locationChecklist === "object"
+      ? (source.locationChecklist as Partial<Record<keyof LocationChecklistInput, unknown>>)
+      : {};
+  const rawLocationManual =
+    rawLocationChecklist.manual && typeof rawLocationChecklist.manual === "object"
+      ? (rawLocationChecklist.manual as Partial<Record<keyof LocationManualChecks, unknown>>)
+      : {};
+  const normalizeManualLevel = (value: unknown): LocationManualLevel =>
+    value === "GOOD" || value === "CAUTION" || value === "BAD" ? value : "UNKNOWN";
+  const rawLocationAuto =
+    rawLocationChecklist.auto && typeof rawLocationChecklist.auto === "object"
+      ? (rawLocationChecklist.auto as Partial<LocationChecklistAuto>)
+      : null;
+  const normalizePoint = (value: unknown): LocationPointSummary | null => {
+    if (!value || typeof value !== "object") return null;
+    const point = value as Partial<LocationPointSummary>;
+    return {
+      name: typeof point.name === "string" ? point.name : null,
+      distanceMeters: typeof point.distanceMeters === "number" ? point.distanceMeters : null,
+      durationMinutes: typeof point.durationMinutes === "number" ? point.durationMinutes : null,
+      line: typeof point.line === "string" ? point.line : null,
+    };
+  };
+  const normalizePointList = (value: unknown): LocationPointSummary[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => normalizePoint(item))
+      .filter((item): item is LocationPointSummary => item !== null);
+  };
+  const normalizeCount = (value: unknown) => (typeof value === "number" ? value : null);
+  const rawPortyRentByFloor =
+    source.portyRentByFloor && typeof source.portyRentByFloor === "object"
+      ? (source.portyRentByFloor as Partial<Record<PortyFloorKey, unknown>>)
+      : {};
+  const normalizeRentValue = (value: unknown): number | null => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value.replace(/,/g, ""));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+  const normalizePortyRow = (value: unknown): PortyRentRow => {
+    if (!value || typeof value !== "object") {
+      return { minus1Sigma: null, baseSigma: null, plus1Sigma: null };
+    }
+    const row = value as Partial<Record<PortySigmaKey, unknown>>;
+    return {
+      minus1Sigma: normalizeRentValue(row.minus1Sigma),
+      baseSigma: normalizeRentValue(row.baseSigma),
+      plus1Sigma: normalizeRentValue(row.plus1Sigma),
+    };
+  };
+  const normalizeHazardItem = (
+    key: HazardTypeKey,
+    defaultSeverity: string
+  ): HazardSelection => {
+    const entry = hazardSource[key];
+    if (!entry || typeof entry !== "object") {
+      return { ...DEFAULT_HAZARD_INPUT[key] };
+    }
+    const raw = entry as Partial<Record<keyof HazardSelection, unknown>>;
+    return {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : false,
+      severity: typeof raw.severity === "string" ? raw.severity : defaultSeverity,
+    };
+  };
+  return {
+    memo: typeof source.memo === "string" ? source.memo : "",
+    purchaseChecklist: clonePurchaseChecklist(rawPurchaseChecklist),
+    comparableText: typeof source.comparableText === "string" ? source.comparableText : "",
+    portyRentByFloor: clonePortyRentByFloor({
+      floor1: normalizePortyRow(rawPortyRentByFloor.floor1),
+      floor2: normalizePortyRow(rawPortyRentByFloor.floor2),
+      floor3: normalizePortyRow(rawPortyRentByFloor.floor3),
+    }),
+    populationText: typeof source.populationText === "string" ? source.populationText : "",
+    ridershipText: typeof source.ridershipText === "string" ? source.ridershipText : "",
+    vacancyText: typeof source.vacancyText === "string" ? source.vacancyText : "",
+    landPriceText: typeof source.landPriceText === "string" ? source.landPriceText : "",
+    hazard: {
+      flood: normalizeHazardItem("flood", FLOOD_SEVERITY_OPTIONS[0].value),
+      collapse: normalizeHazardItem("collapse", SEDIMENT_SEVERITY_OPTIONS[0].value),
+      debrisFlow: normalizeHazardItem("debrisFlow", SEDIMENT_SEVERITY_OPTIONS[0].value),
+      landslide: normalizeHazardItem("landslide", SEDIMENT_SEVERITY_OPTIONS[0].value),
+    },
+    locationChecklist: {
+      address:
+        typeof rawLocationChecklist.address === "string" ? rawLocationChecklist.address : "",
+      auto: rawLocationAuto
+        ? {
+            fetchedAt:
+              typeof rawLocationAuto.fetchedAt === "string"
+                ? rawLocationAuto.fetchedAt
+                : "",
+            normalizedAddress:
+              typeof rawLocationAuto.normalizedAddress === "string"
+                ? rawLocationAuto.normalizedAddress
+                : null,
+            originLat: typeof rawLocationAuto.originLat === "number" ? rawLocationAuto.originLat : null,
+            originLng: typeof rawLocationAuto.originLng === "number" ? rawLocationAuto.originLng : null,
+            station: normalizePoint(rawLocationAuto.station),
+            busStop: normalizePoint(rawLocationAuto.busStop),
+            convenienceStore: normalizePoint(rawLocationAuto.convenienceStore),
+            supermarket: normalizePoint(rawLocationAuto.supermarket),
+            hospital: normalizePoint(rawLocationAuto.hospital),
+            pharmacy: normalizePoint(rawLocationAuto.pharmacy),
+            stationOptions: normalizePointList(rawLocationAuto.stationOptions),
+            busStopOptions: normalizePointList(rawLocationAuto.busStopOptions),
+            convenienceOptions: normalizePointList(rawLocationAuto.convenienceOptions),
+            supermarketOptions: normalizePointList(rawLocationAuto.supermarketOptions),
+            convenienceCount800m: normalizeCount(rawLocationAuto.convenienceCount800m),
+            supermarketCount800m: normalizeCount(rawLocationAuto.supermarketCount800m),
+            hospitalCount800m: normalizeCount(rawLocationAuto.hospitalCount800m),
+            pharmacyCount800m: normalizeCount(rawLocationAuto.pharmacyCount800m),
+            schoolCount800m: normalizeCount(rawLocationAuto.schoolCount800m),
+            parkCount800m: normalizeCount(rawLocationAuto.parkCount800m),
+            cemeteryCount1500m: normalizeCount(rawLocationAuto.cemeteryCount1500m),
+            wasteFacilityCount1500m: normalizeCount(rawLocationAuto.wasteFacilityCount1500m),
+            factoryCount1500m: normalizeCount(rawLocationAuto.factoryCount1500m),
+          }
+        : null,
+      manual: {
+        slopeAndSidewalk: normalizeManualLevel(rawLocationManual.slopeAndSidewalk),
+        nightLightingSafety: normalizeManualLevel(rawLocationManual.nightLightingSafety),
+        smellVibration: normalizeManualLevel(rawLocationManual.smellVibration),
+        litterGraffiti: normalizeManualLevel(rawLocationManual.litterGraffiti),
+        dangerousRoads: normalizeManualLevel(rawLocationManual.dangerousRoads),
+      },
+    },
+  };
+};
+
 const DEFAULT_LEFT_ORDER = [
   "tip",
   "breakdownPrice",
@@ -147,6 +689,7 @@ const DEFAULT_LEFT_ORDER = [
 ];
 const DEFAULT_RIGHT_ORDER = [
   "kpi",
+  "investmentScore",
   "charts",
   "cashflow",
   "simulation",
@@ -185,6 +728,10 @@ type SavedSimulation = {
   name: string;
   createdAt: Date | null;
   input: PropertyInput;
+  listing: ImportHistoryItem["listing"];
+  listingUrl: string | null;
+  extraInfo: ExtraInfoInput;
+  aiMessages: { role: "user" | "assistant"; content: string }[];
 };
 
 type AnalysisRunItem = {
@@ -192,6 +739,7 @@ type AnalysisRunItem = {
   url: string;
   listing: ImportHistoryItem["listing"];
   input: PropertyInput;
+  extraInfo: ExtraInfoInput;
   aiMessages: { role: "user" | "assistant"; content: string }[];
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -340,6 +888,14 @@ const KPI_INFO: Record<string, KpiInfo> = {
     detail:
       "税引前CFがプラスでも、税負担でマイナスになる場合があります。ATCFが赤字に転じる年がないかを確認することが重要です。",
     threshold: "0円以上が望ましい",
+  },
+  cashFlow10yWithExit: {
+    title: "10年CF累計+売却手残り",
+    summary: "1〜10年の税引後CF累計に、出口時の売却手残りを加えた合計。",
+    detail:
+      "中期運用での現金回収力を一目で確認するための指標です。売却年を10年以外に設定している場合でも、10年累計CFに設定売却年の手残りを合算します。",
+    formula: "Σ(1〜10年の税引後CF) + 売却手残り",
+    threshold: "0円以上が目安",
   },
   deadCross: {
     title: "デッドクロス",
@@ -569,8 +1125,18 @@ export default function Home() {
   const [leftOrder, setLeftOrder] = useState(DEFAULT_LEFT_ORDER);
   const [rightOrder, setRightOrder] = useState(DEFAULT_RIGHT_ORDER);
   const [formVersion, setFormVersion] = useState(0);
+  const [investmentInput, setInvestmentInput] = useState(DEFAULT_INVESTMENT_INPUT);
+  const [investmentEditOpen, setInvestmentEditOpen] = useState(false);
+  const [extraInfo, setExtraInfo] = useState<ExtraInfoInput>(createDefaultExtraInfo);
+  const [showCompletedChecklist, setShowCompletedChecklist] = useState(false);
+  const [locationLookupLoading, setLocationLookupLoading] = useState(false);
+  const [locationLookupError, setLocationLookupError] = useState<string | null>(null);
+  const [areaStatsLookupLoading, setAreaStatsLookupLoading] = useState(false);
+  const [areaStatsLookupError, setAreaStatsLookupError] = useState<string | null>(null);
+  const [areaStatsLookupNotice, setAreaStatsLookupNotice] = useState<string | null>(null);
   const analysisRunIdRef = useRef<string | null>(null);
   const analysisRunUrlRef = useRef<string | null>(null);
+  const ridershipLookupKeyRef = useRef<string>("");
   const resultsRef = useRef<HTMLElement | null>(null);
   const aiMessagesRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -580,13 +1146,14 @@ export default function Home() {
   );
   const [openSections, setOpenSections] = useState({
     kpi: true,
-    cashflow: true,
-    simulation: true,
-    repayment: true,
+    investmentScore: false,
+    cashflow: false,
+    simulation: false,
+    repayment: false,
     chart: true,
     detail: true,
-    exit: true,
-    scenario: true,
+    exit: false,
+    scenario: false,
     breakdownPrice: true,
     breakdownInitial: true,
     breakdownTax: true,
@@ -596,6 +1163,1310 @@ export default function Home() {
 
   const toggleSection = (key: keyof typeof openSections) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const updateInvestmentInput = <K extends keyof InvestmentInput>(
+    key: K,
+    value: InvestmentInput[K]
+  ) => {
+    setInvestmentInput((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const extractLabelValue = (text: string, label: string) => {
+    const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // 改行をまたいで次の項目値を拾わないよう、同一行のみを抽出する。
+    const regex = new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*[:：]?\\s*([^\\n]*)`, "m");
+    const match = text.match(regex);
+    if (!match) return null;
+    const value = match[1].trim();
+    return value.length > 0 ? value : null;
+  };
+
+  const parsePlainNumber = (value: string | null | undefined) => {
+    if (!value) return null;
+    const normalized = value.replace(/,/g, "").replace(/[^\d.\-+]/g, "");
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const parsePercentNumber = (value: string | null | undefined) => {
+    if (!value) return null;
+    const match = value.match(/[+\-−±]?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    let token = match[0].replace("−", "-");
+    if (token.startsWith("±")) token = "0";
+    const parsed = Number(token);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const getDeltaToneClass = (value: string | null | undefined) => {
+    if (!value) return "delta-neutral";
+    if (value.includes("±")) return "delta-neutral";
+    const parsed = parsePercentNumber(value);
+    if (parsed === null || parsed === 0) return "delta-neutral";
+    return parsed > 0 ? "delta-up" : "delta-down";
+  };
+
+  const renderDelta = (value: string | null | undefined, unit: "%" | "pt" = "%") => {
+    if (!value) return null;
+    const compact = value.replace(/\s+/g, "");
+    if (compact === "-") {
+      return <span className="delta-value delta-neutral">(-{unit})</span>;
+    }
+    const withoutUnit = compact.replace(/%|pt/gi, "");
+    const shown = `${withoutUnit}${unit}`;
+    return <span className={`delta-value ${getDeltaToneClass(value)}`}>({shown})</span>;
+  };
+
+  const formatDistance = (meters: number | null | undefined) =>
+    typeof meters === "number" ? `${Math.round(meters).toLocaleString()}m` : "—";
+
+  const formatMinutes = (minutes: number | null | undefined) =>
+    typeof minutes === "number" ? `${minutes}分` : "—";
+
+  const formatStationLine = (line: string | null | undefined) => {
+    if (!line) return "";
+    return line.replace("（Google分類）", "").trim();
+  };
+
+  const renderLocationOptionList = (
+    label: string,
+    items: LocationPointSummary[] | undefined,
+    withLine = false
+  ) => {
+    if (!items?.length) return null;
+    return (
+      <div className="extra-info-inline-candidates">
+        <div className="extra-info-inline-candidates-label">{label}</div>
+        {items.slice(0, 5).map((item, index) => (
+          <div
+            key={`${label}-${item.name ?? "unknown"}-${item.distanceMeters ?? "na"}-${index}`}
+            className="extra-info-inline-candidate"
+          >
+            <span>
+              {item.name ?? "—"}
+              {withLine && item.line ? ` (${formatStationLine(item.line)})` : ""}
+            </span>
+            <strong>
+              {formatMinutes(item.durationMinutes)} / {formatDistance(item.distanceMeters)}
+            </strong>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const getManualLevelToneClass = (level: LocationManualLevel) => {
+    if (level === "GOOD") return "is-good";
+    if (level === "CAUTION") return "is-mid";
+    if (level === "BAD") return "is-bad";
+    return "is-neutral";
+  };
+
+  const comparableSummary = useMemo(() => {
+    const text = extraInfo.comparableText.trim();
+    if (!text) return null;
+    const rawYield = extractLabelValue(text, "表面利回り");
+    const rawAvgYield = extractLabelValue(text, "周辺地域の平均利回り");
+    const normalizedYield = rawYield && /%/.test(rawYield) ? rawYield : null;
+    const normalizedAvgYield = rawAvgYield && /%/.test(rawAvgYield) ? rawAvgYield : null;
+    return {
+      salePrice: extractLabelValue(text, "販売価格"),
+      yield: normalizedYield,
+      avgYield: normalizedAvgYield,
+      annualIncome: extractLabelValue(text, "想定年間収入"),
+      address: extractLabelValue(text, "所在地"),
+      access: extractLabelValue(text, "交通"),
+      structure: extractLabelValue(text, "建物構造"),
+      builtYear: extractLabelValue(text, "築年月"),
+      landRight: extractLabelValue(text, "土地権利"),
+      buildingArea: extractLabelValue(text, "建物面積"),
+      landArea: extractLabelValue(text, "土地面積"),
+      transactionType: extractLabelValue(text, "取引態様"),
+    };
+  }, [extraInfo.comparableText]);
+
+  const populationSummary = useMemo(() => {
+    const text = extraInfo.populationText.trim();
+    if (!text) return null;
+
+    const lines = text
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const parseRows = (block: string, includeHouseholds: boolean) => {
+      const blockLines = block
+        .split(/\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const rows: Array<{
+        year: string;
+        population: string | null;
+        populationDelta: string | null;
+        households: string | null;
+        householdsDelta: string | null;
+      }> = [];
+
+      for (let i = 0; i < blockLines.length; i += 1) {
+        const yearMatch = blockLines[i].match(/^(\d{4})$/);
+        if (!yearMatch) continue;
+        const year = yearMatch[1];
+
+        let population: string | null = null;
+        let populationDelta: string | null = null;
+        let households: string | null = null;
+        let householdsDelta: string | null = null;
+
+        for (let j = i + 1; j < Math.min(blockLines.length, i + 10); j += 1) {
+          if (blockLines[j].match(/^(\d{4})$/)) break;
+          const numMatch = blockLines[j].match(/^([0-9,]+)$/);
+          if (numMatch) {
+            if (!population) {
+              population = numMatch[1];
+              continue;
+            }
+            if (includeHouseholds && !households) {
+              households = numMatch[1];
+              continue;
+            }
+          }
+          const deltaMatch = blockLines[j].match(/\(([+\-−0-9.]+)%\)/);
+          if (deltaMatch) {
+            if (!populationDelta) {
+              populationDelta = deltaMatch[1].replace("−", "-");
+              continue;
+            }
+            if (includeHouseholds && !householdsDelta) {
+              householdsDelta = deltaMatch[1].replace("−", "-");
+              continue;
+            }
+          }
+          if (blockLines[j].includes("(-%)")) {
+            if (!populationDelta) {
+              populationDelta = "-";
+              continue;
+            }
+            if (includeHouseholds && !householdsDelta) {
+              householdsDelta = "-";
+              continue;
+            }
+          }
+        }
+
+        if (population || households) {
+          rows.push({
+            year,
+            population,
+            populationDelta,
+            households,
+            householdsDelta,
+          });
+        }
+      }
+      return rows;
+    };
+
+    const latestPopulationMatch = text.match(/人口\s*([0-9,]+)人/);
+    const latestPopulationDeltaMatch = text.match(
+      /人口[\s\S]*?\(([+\-−0-9.]+)%\)/
+    );
+    const latestHouseholdsMatch = text.match(/世帯数\s*([0-9,]+)世帯/);
+    const latestHouseholdsDeltaMatch = text.match(
+      /世帯数[\s\S]*?\(([+\-−0-9.]+)%\)/
+    );
+
+    const forecastBlockMatch = text.match(/将来予測データ[\s\S]*?実績データ/);
+    const forecastBlock = forecastBlockMatch
+      ? forecastBlockMatch[0].replace(/実績データ[\s\S]*$/, "")
+      : "";
+    const forecastRows = parseRows(forecastBlock, false);
+
+    const actualBlockMatch = text.match(/実績データ([\s\S]*?)(出典データ|$)/);
+    const actualBlock = actualBlockMatch ? actualBlockMatch[1] : text;
+    const actualRows = parseRows(actualBlock, true);
+
+    const byYear = new Map<string, (typeof actualRows)[number]>();
+    [...forecastRows, ...actualRows].forEach((row) => {
+      const prev = byYear.get(row.year);
+      byYear.set(row.year, {
+        year: row.year,
+        population: row.population ?? prev?.population ?? null,
+        populationDelta: row.populationDelta ?? prev?.populationDelta ?? null,
+        households: row.households ?? prev?.households ?? null,
+        householdsDelta: row.householdsDelta ?? prev?.householdsDelta ?? null,
+      });
+    });
+    const yearlyRows = Array.from(byYear.values()).sort((a, b) => Number(b.year) - Number(a.year));
+
+    return {
+      area: lines.find((line) => /(都|道|府|県).*(市|区|町|村)/.test(line)) ?? null,
+      population: latestPopulationMatch ? latestPopulationMatch[1] : actualRows[0]?.population ?? null,
+      populationDelta:
+        latestPopulationDeltaMatch?.[1]?.replace("−", "-") ??
+        actualRows[0]?.populationDelta ??
+        null,
+      households: latestHouseholdsMatch ? latestHouseholdsMatch[1] : actualRows[0]?.households ?? null,
+      householdsDelta:
+        latestHouseholdsDeltaMatch?.[1]?.replace("−", "-") ??
+        actualRows[0]?.householdsDelta ??
+        null,
+      forecastRows,
+      actualRows,
+      yearlyRows,
+    };
+  }, [extraInfo.populationText]);
+
+  const ridershipSummary = useMemo(() => {
+    const text = extraInfo.ridershipText.trim();
+    if (!text) return null;
+    const stationMatch = text.match(/^\s*([^\n]*駅)\s*$/m);
+    const ridershipMatch = text.match(/乗降客数\s*([0-9,]+)人/);
+    const deltaMatch = text.match(/乗降客数[\s\S]*?\(([+\-0-9.]+)%\)/);
+    const tableBlockMatch = text.match(/実績データ([\s\S]*?)(出典データ|$)/);
+    const tableBlock = tableBlockMatch ? tableBlockMatch[1] : text;
+    const tableLines = tableBlock
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const yearlyRows: {
+      year: string;
+      ridership: string | null;
+      delta: string | null;
+    }[] = [];
+    for (let i = 0; i < tableLines.length; i += 1) {
+      const yearMatch = tableLines[i].match(/^(\d{4})$/);
+      if (!yearMatch) continue;
+      const year = yearMatch[1];
+      let ridership: string | null = null;
+      let delta: string | null = null;
+      for (let j = i + 1; j < Math.min(tableLines.length, i + 6); j += 1) {
+        if (tableLines[j].match(/^(\d{4})$/)) break;
+        const ridershipMatchLine = tableLines[j].match(/^([0-9,]+)$/);
+        if (ridershipMatchLine && !ridership) {
+          ridership = ridershipMatchLine[1];
+          continue;
+        }
+        const deltaMatchLine = tableLines[j].match(/\(([+\-0-9.]+)%\)/);
+        if (deltaMatchLine && !delta) {
+          delta = deltaMatchLine[1];
+          continue;
+        }
+        if (tableLines[j].includes("(-%)") && !delta) {
+          delta = "-";
+        }
+      }
+      if (ridership) {
+        yearlyRows.push({
+          year,
+          ridership,
+          delta,
+        });
+      }
+    }
+
+    const latestRow = yearlyRows[0] ?? null;
+    return {
+      station: stationMatch ? stationMatch[1] : null,
+      ridership: ridershipMatch ? ridershipMatch[1] : latestRow?.ridership ?? null,
+      delta: deltaMatch ? deltaMatch[1] : latestRow?.delta ?? null,
+      yearlyRows,
+    };
+  }, [extraInfo.ridershipText]);
+
+  const vacancySummary = useMemo(() => {
+    const text = extraInfo.vacancyText.trim();
+    if (!text) return null;
+    const rateMatch = text.match(/空室率\s*([0-9.]+)%/);
+    const deltaMatch = text.match(/\(([+\-0-9.]+)pt\)/);
+    const countMatch = text.match(/([0-9,]+)\(空家\)\s*\/\s*([0-9,]+)\(借家\)/);
+    const tableBlockMatch = text.match(/実績データ([\s\S]*?)(出典データ|$)/);
+    const tableBlock = tableBlockMatch ? tableBlockMatch[1] : text;
+    const tableLines = tableBlock
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const yearlyRows: {
+      year: string;
+      rate: string | null;
+      delta: string | null;
+      emptyUnits: string | null;
+      rentalUnits: string | null;
+    }[] = [];
+    for (let i = 0; i < tableLines.length; i += 1) {
+      const yearMatch = tableLines[i].match(/^(\d{4})$/);
+      if (!yearMatch) continue;
+      const year = yearMatch[1];
+      let rate: string | null = null;
+      let delta: string | null = null;
+      let emptyUnits: string | null = null;
+      let rentalUnits: string | null = null;
+      for (let j = i + 1; j < Math.min(tableLines.length, i + 8); j += 1) {
+        if (tableLines[j].match(/^(\d{4})$/)) break;
+        const rateMatchLine = tableLines[j].match(/([0-9.]+)%/);
+        if (rateMatchLine && !rate) {
+          rate = rateMatchLine[1];
+        }
+        const deltaMatchLine = tableLines[j].match(/\(([+\-0-9.]+)pt\)/);
+        if (deltaMatchLine && !delta) {
+          delta = deltaMatchLine[1];
+        } else if (tableLines[j].includes("(-pt)") && !delta) {
+          delta = "-";
+        }
+        const countMatchLine = tableLines[j].match(/([0-9,]+)\s*\/\s*([0-9,]+)/);
+        if (countMatchLine && !emptyUnits && !rentalUnits) {
+          emptyUnits = countMatchLine[1];
+          rentalUnits = countMatchLine[2];
+        }
+      }
+      if (rate || emptyUnits || rentalUnits) {
+        yearlyRows.push({
+          year,
+          rate,
+          delta,
+          emptyUnits,
+          rentalUnits,
+        });
+      }
+    }
+    return {
+      rate: rateMatch ? rateMatch[1] : null,
+      delta: deltaMatch ? deltaMatch[1] : null,
+      emptyUnits: countMatch ? countMatch[1] : null,
+      rentalUnits: countMatch ? countMatch[2] : null,
+      yearlyRows,
+    };
+  }, [extraInfo.vacancyText]);
+
+  const landPriceSummary = useMemo(() => {
+    const text = extraInfo.landPriceText.trim();
+    if (!text) return null;
+    const lines = text
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const addressLine =
+      lines.find((line) => /県|都|府|道/.test(line)) ?? lines[0] ?? null;
+
+    const parseSection = (heading: string) => {
+      const start = text.indexOf(heading);
+      if (start === -1) return null;
+      const rest = text.slice(start + heading.length);
+      const end = rest.search(/\n\s*(公示地価|基準地価|実績データ)\s*\n/);
+      const section = end >= 0 ? rest.slice(0, end) : rest;
+      const priceMatch = section.match(/価格\s*([0-9万,.]+円\/㎡)\s*\(([+\-0-9.%]+)\)/);
+      const areaMatch = section.match(/地積\s*([0-9,]+)㎡/);
+      const ratioMatch = section.match(/建ぺい率\s*\/\s*容積率\s*([0-9%\s/]+%)/);
+      const zoneMatch = section.match(/用途地域\s*([^\n]+)/);
+      const planningMatch = section.match(/都市計画区分\s*([^\n]+)/);
+      return {
+        price: priceMatch ? priceMatch[1] : null,
+        delta: priceMatch ? priceMatch[2] : null,
+        area: areaMatch ? areaMatch[1] : null,
+        ratio: ratioMatch ? ratioMatch[1].replace(/\s+/g, " ") : null,
+        zone: zoneMatch ? zoneMatch[1].trim() : null,
+        planning: planningMatch ? planningMatch[1].trim() : null,
+      };
+    };
+
+    const parseYearlyRows = () => {
+      const tableBlockMatch = text.match(/実績データ([\s\S]*?)(出典データ|$)/);
+      const tableBlock = tableBlockMatch ? tableBlockMatch[1] : text;
+      const tableLines = tableBlock
+        .split(/\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const hasOfficialInTable = tableBlock.includes("公示地価");
+      const hasBenchmarkInTable = tableBlock.includes("基準地価");
+      const rows: {
+        year: string;
+        official: string | null;
+        officialDelta: string | null;
+        benchmark: string | null;
+        benchmarkDelta: string | null;
+      }[] = [];
+      for (let i = 0; i < tableLines.length; i += 1) {
+        const yearMatch = tableLines[i].match(/^(\d{4})$/);
+        if (!yearMatch) continue;
+        const year = yearMatch[1];
+        let official: string | null = null;
+        let officialDelta: string | null = null;
+        let benchmark: string | null = null;
+        let benchmarkDelta: string | null = null;
+        for (let j = i + 1; j < Math.min(tableLines.length, i + 10); j += 1) {
+          if (tableLines[j].match(/^(\d{4})$/)) break;
+          const priceMatch = tableLines[j].match(/([0-9万,.]+円\/㎡)/);
+          if (!priceMatch) continue;
+          const deltaMatch = tableLines[j].match(/\(([+\-0-9.%±]+)\)/);
+          if (!official) {
+            official = priceMatch[1];
+            officialDelta = deltaMatch ? deltaMatch[1] : null;
+          } else if (!benchmark) {
+            benchmark = priceMatch[1];
+            benchmarkDelta = deltaMatch ? deltaMatch[1] : null;
+            break;
+          }
+        }
+        if (hasOfficialInTable && !hasBenchmarkInTable) {
+          benchmark = null;
+          benchmarkDelta = null;
+        } else if (!hasOfficialInTable && hasBenchmarkInTable) {
+          benchmark = official;
+          benchmarkDelta = officialDelta;
+          official = null;
+          officialDelta = null;
+        }
+        if (official || benchmark) {
+          rows.push({
+            year,
+            official,
+            officialDelta,
+            benchmark,
+            benchmarkDelta,
+          });
+        }
+      }
+      return rows;
+    };
+
+    const official = parseSection("公示地価");
+    const benchmark = parseSection("基準地価");
+    const yearlyRows = parseYearlyRows();
+
+    return {
+      address: addressLine,
+      official,
+      benchmark,
+      yearlyRows,
+    };
+  }, [extraInfo.landPriceText]);
+
+  const additionalInfoScore = useMemo(() => {
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    const targetYield =
+      inputData.price > 0 && inputData.monthlyRent > 0
+        ? (inputData.monthlyRent * 12 * 100) / inputData.price
+        : null;
+    const marketYield =
+      parsePercentNumber(comparableSummary?.avgYield) ?? parsePercentNumber(comparableSummary?.yield);
+
+    const comparableItem = (() => {
+      if (targetYield === null || marketYield === null) {
+        return {
+          label: "近似売り物件利回り",
+          max: 30,
+          score: null as number | null,
+          reason: "対象利回りまたは周辺利回りが不足しているため未評価です。",
+          warning: false,
+        };
+      }
+      const gap = targetYield - marketYield;
+      // この項目は「利回り差が大きいほど加点」方針で採点する。
+      let score = 0;
+      if (gap <= 0) score = 0;
+      else if (gap <= 0.33) score = 7;
+      else if (gap <= 0.66) score = 15;
+      else if (gap <= 1.0) score = 21;
+      else if (gap <= 1.3) score = 25;
+      else if (gap <= 2.0) score = 29;
+      else score = 30;
+      return {
+        label: "近似売り物件利回り",
+        max: 30,
+        score,
+        reason: `対象 ${targetYield.toFixed(2)}% / 周辺 ${marketYield.toFixed(
+          2
+        )}%（差 ${gap >= 0 ? "+" : ""}${gap.toFixed(2)}pt）`,
+        warning: false,
+      };
+    })();
+
+    const rentMarketItem = (() => {
+      const floors = (Object.keys(PORTY_FLOOR_LABELS) as PortyFloorKey[]).map((key) => ({
+        key,
+        label: PORTY_FLOOR_LABELS[key],
+        ...extraInfo.portyRentByFloor[key],
+      }));
+      const isValidRent = (value: number | null) =>
+        typeof value === "number" && Number.isFinite(value) && value > 0;
+      const filledValueCount = floors.reduce((sum, floor) => {
+        const values = [floor.minus1Sigma, floor.baseSigma, floor.plus1Sigma];
+        return sum + values.filter((value) => isValidRent(value)).length;
+      }, 0);
+      if (filledValueCount === 0) {
+        return {
+          label: "周辺家賃相場",
+          max: 15,
+          score: null as number | null,
+          reason: "ポルティ査定の家賃データが未入力のため未評価です。",
+          warning: false,
+        };
+      }
+
+      const completeRows = floors.filter(
+        (floor) =>
+          isValidRent(floor.minus1Sigma) &&
+          isValidRent(floor.baseSigma) &&
+          isValidRent(floor.plus1Sigma)
+      ) as Array<{
+        key: PortyFloorKey;
+        label: string;
+        minus1Sigma: number;
+        baseSigma: number;
+        plus1Sigma: number;
+      }>;
+      const orderedRows = completeRows.filter(
+        (floor) => floor.minus1Sigma <= floor.baseSigma && floor.baseSigma <= floor.plus1Sigma
+      );
+      const completenessScore = clamp(Math.round((filledValueCount / 9) * 6), 0, 6);
+      const spreadScore = clamp(orderedRows.length, 0, 3);
+
+      const floorOrder: PortyFloorKey[] = ["floor1", "floor2", "floor3"];
+      const floorTrendPairs: Array<[number, number]> = [];
+      for (let i = 0; i < floorOrder.length - 1; i += 1) {
+        const current = completeRows.find((row) => row.key === floorOrder[i]);
+        const next = completeRows.find((row) => row.key === floorOrder[i + 1]);
+        if (!current || !next) continue;
+        floorTrendPairs.push([current.baseSigma, next.baseSigma]);
+      }
+      const floorTrendScore =
+        floorTrendPairs.length === 0
+          ? 1
+          : (() => {
+              const upCount = floorTrendPairs.filter(([lower, upper]) => upper >= lower).length;
+              if (upCount === floorTrendPairs.length) return 2;
+              if (upCount >= floorTrendPairs.length - 1) return 1;
+              return 0;
+            })();
+
+      const marketBaseAvg =
+        completeRows.length > 0
+          ? completeRows.reduce((sum, row) => sum + row.baseSigma, 0) / completeRows.length
+          : null;
+      const targetUnitRent =
+        inputData.monthlyRent > 0 && inputData.unitCount > 0
+          ? inputData.monthlyRent / inputData.unitCount
+          : null;
+      let fitScore = 2;
+      let gapPercent: number | null = null;
+      if (targetUnitRent !== null && marketBaseAvg !== null && marketBaseAvg > 0) {
+        gapPercent = ((targetUnitRent - marketBaseAvg) / marketBaseAvg) * 100;
+        const absGap = Math.abs(gapPercent);
+        if (absGap <= 5) fitScore = 4;
+        else if (absGap <= 10) fitScore = 3;
+        else if (absGap <= 15) fitScore = 2;
+        else if (absGap <= 20) fitScore = 1;
+        else fitScore = 0;
+      }
+
+      const score = clamp(completenessScore + spreadScore + floorTrendScore + fitScore, 0, 15);
+      const reasonParts = [
+        `入力 ${filledValueCount}/9`,
+        `階内整合 ${orderedRows.length}/${completeRows.length}`,
+      ];
+      if (marketBaseAvg !== null) {
+        reasonParts.push(`基準平均 ${Math.round(marketBaseAvg).toLocaleString()}円`);
+      }
+      if (targetUnitRent !== null && gapPercent !== null) {
+        reasonParts.push(
+          `自社想定/戸 ${Math.round(targetUnitRent).toLocaleString()}円（差 ${
+            gapPercent >= 0 ? "+" : ""
+          }${gapPercent.toFixed(1)}%）`
+        );
+      } else {
+        reasonParts.push("自社想定/戸は戸数入力後に比較");
+      }
+      return {
+        label: "周辺家賃相場",
+        max: 15,
+        score,
+        reason: reasonParts.join(" / "),
+        warning: score <= 7 || (gapPercent !== null && gapPercent > 15),
+      };
+    })();
+
+    const populationItem = (() => {
+      const rows = (populationSummary?.actualRows ?? [])
+        .map((row) => ({
+          year: Number(row.year),
+          population: parsePlainNumber(row.population),
+          households: parsePlainNumber(row.households),
+          populationDelta: parsePercentNumber(row.populationDelta),
+          householdsDelta: parsePercentNumber(row.householdsDelta),
+        }))
+        .filter((row) => Number.isFinite(row.year)) as Array<{
+        year: number;
+        population: number | null;
+        households: number | null;
+        populationDelta: number | null;
+        householdsDelta: number | null;
+      }>;
+      if (rows.length === 0) {
+        return {
+          label: "人口推移",
+          max: 20,
+          score: null as number | null,
+          reason: "人口・世帯のトレンドデータが不足しているため未評価です。",
+          warning: false,
+        };
+      }
+
+      const sorted = [...rows].sort((a, b) => b.year - a.year);
+      const latest = sorted[0];
+      const base = sorted[sorted.length - 1];
+
+      const actualPopulationCagr =
+        latest.population !== null &&
+        base.population !== null &&
+        latest.population > 0 &&
+        base.population > 0 &&
+        latest.year > base.year
+          ? (Math.pow(latest.population / base.population, 1 / (latest.year - base.year)) - 1) * 100
+          : null;
+
+      const forecast = (populationSummary?.forecastRows ?? [])
+        .map((row) => ({
+          year: Number(row.year),
+          population: parsePlainNumber(row.population),
+        }))
+        .filter((row) => Number.isFinite(row.year) && row.population !== null) as Array<{
+        year: number;
+        population: number;
+      }>;
+      const forecastSorted = [...forecast].sort((a, b) => b.year - a.year);
+      const futureCagr =
+        forecastSorted.length >= 2
+          ? (() => {
+              const fLatest = forecastSorted[0];
+              const fBase = forecastSorted[forecastSorted.length - 1];
+              if (fLatest.population <= 0 || fBase.population <= 0 || fLatest.year <= fBase.year) {
+                return null;
+              }
+              return (
+                (Math.pow(fLatest.population / fBase.population, 1 / (fLatest.year - fBase.year)) - 1) *
+                100
+              );
+            })()
+          : null;
+
+      const popDelta = latest.populationDelta;
+      const householdDelta = latest.householdsDelta;
+      let score = 10;
+      if (popDelta !== null) {
+        if (popDelta >= 2) score += 4;
+        else if (popDelta >= 0) score += 2;
+        else if (popDelta <= -1.5) score -= 4;
+        else score -= 2;
+      }
+      if (householdDelta !== null) {
+        if (householdDelta >= 2) score += 4;
+        else if (householdDelta >= 0) score += 2;
+        else if (householdDelta <= -1.5) score -= 4;
+        else score -= 2;
+      }
+      if (actualPopulationCagr !== null) {
+        if (actualPopulationCagr >= 0.5) score += 2;
+        else if (actualPopulationCagr < -0.3) score -= 2;
+      }
+      score = clamp(score, 0, 20);
+
+      return {
+        label: "人口推移",
+        max: 20,
+        score,
+        reason: `実績 人口${popDelta === null ? "-" : `${popDelta >= 0 ? "+" : ""}${popDelta.toFixed(
+          1
+        )}%`} / 世帯${householdDelta === null ? "-" : `${householdDelta >= 0 ? "+" : ""}${householdDelta.toFixed(
+          1
+        )}%`}, 将来CAGR ${futureCagr === null ? "-" : `${futureCagr >= 0 ? "+" : ""}${futureCagr.toFixed(2)}%`}`,
+        warning: (popDelta ?? 0) < 0 && (householdDelta ?? 0) < 0,
+      };
+    })();
+
+    const ridershipItem = (() => {
+      const rows = (ridershipSummary?.yearlyRows ?? [])
+        .map((row) => ({
+          year: Number(row.year),
+          ridership: parsePlainNumber(row.ridership),
+          delta: parsePercentNumber(row.delta),
+        }))
+        .filter((row) => Number.isFinite(row.year) && row.ridership !== null) as {
+        year: number;
+        ridership: number;
+        delta: number | null;
+      }[];
+      if (rows.length === 0) {
+        return {
+          label: "乗降客数",
+          max: 15,
+          score: null as number | null,
+          reason: "乗降客数データが不足しているため未評価です。",
+          warning: false,
+        };
+      }
+      const sorted = [...rows].sort((a, b) => b.year - a.year);
+      const latest = sorted[0];
+      const base =
+        sorted.find((row) => latest.year - row.year >= 3) ??
+        sorted[Math.min(3, sorted.length - 1)];
+      const span = Math.max(1, latest.year - base.year);
+      const cagr = (Math.pow(latest.ridership / base.ridership, 1 / span) - 1) * 100;
+      const latestDelta = latest.delta;
+      let score = 9;
+      if (cagr >= 2 && (latestDelta === null || latestDelta >= 0)) score = 15;
+      else if (cagr >= 0.5) score = 12;
+      else if (cagr >= -0.5) score = 9;
+      else score = 5;
+      if (latestDelta !== null && latestDelta < 0) {
+        score = Math.max(0, score - 2);
+      }
+      return {
+        label: "乗降客数",
+        max: 15,
+        score,
+        reason: `3年CAGR ${cagr >= 0 ? "+" : ""}${cagr.toFixed(2)}% / 最新前年差 ${
+          latestDelta === null ? "-" : `${latestDelta >= 0 ? "+" : ""}${latestDelta.toFixed(1)}%`
+        }`,
+        warning: score <= 7,
+      };
+    })();
+
+    const vacancyItem = (() => {
+      const latestRate =
+        parsePercentNumber(vacancySummary?.rate) ??
+        parsePercentNumber(vacancySummary?.yearlyRows?.[0]?.rate) ??
+        null;
+      const latestDelta =
+        parsePercentNumber(vacancySummary?.delta) ??
+        parsePercentNumber(vacancySummary?.yearlyRows?.[0]?.delta) ??
+        null;
+      if (latestRate === null) {
+        return {
+          label: "空室率",
+          max: 20,
+          score: null as number | null,
+          reason: "空室率データが不足しているため未評価です。",
+          warning: false,
+        };
+      }
+      const levelScore =
+        latestRate < 8 ? 14 : latestRate < 10 ? 11 : latestRate < 12 ? 8 : latestRate < 15 ? 4 : 1;
+      const trendScore =
+        latestDelta === null ? 3 : latestDelta <= -1 ? 6 : latestDelta < 1 ? 3 : 0;
+      const score = clamp(levelScore + trendScore, 0, 20);
+      return {
+        label: "空室率",
+        max: 20,
+        score,
+        reason: `最新空室率 ${latestRate.toFixed(1)}% / 前期差 ${
+          latestDelta === null ? "-" : `${latestDelta >= 0 ? "+" : ""}${latestDelta.toFixed(1)}pt`
+        }`,
+        warning: latestRate >= 12 || (latestDelta !== null && latestDelta >= 1),
+      };
+    })();
+
+    const landPriceItem = (() => {
+      const rows = (landPriceSummary?.yearlyRows ?? [])
+        .map((row) => {
+          const official = parsePercentNumber(row.officialDelta);
+          const benchmark = parsePercentNumber(row.benchmarkDelta);
+          const deltas = [official, benchmark].filter((value): value is number => value !== null);
+          const meanDelta =
+            deltas.length > 0 ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : null;
+          return { year: Number(row.year), meanDelta };
+        })
+        .filter((row) => Number.isFinite(row.year) && row.meanDelta !== null) as {
+        year: number;
+        meanDelta: number;
+      }[];
+      const sorted = [...rows].sort((a, b) => b.year - a.year);
+      const latestDelta =
+        sorted[0]?.meanDelta ??
+        parsePercentNumber(landPriceSummary?.official?.delta) ??
+        parsePercentNumber(landPriceSummary?.benchmark?.delta) ??
+        null;
+      const avg5 =
+        sorted.length > 0
+          ? sorted
+              .slice(0, 5)
+              .reduce((sum, row) => sum + row.meanDelta, 0) /
+            Math.min(5, sorted.length)
+          : latestDelta;
+
+      if (latestDelta === null) {
+        return {
+          label: "基準地価",
+          max: 15,
+          score: null as number | null,
+          reason: "地価トレンドデータが不足しているため未評価です。",
+          warning: false,
+        };
+      }
+
+      let score = 9;
+      if (latestDelta >= 3 && (avg5 ?? 0) >= 2) score = 15;
+      else if (latestDelta >= 1) score = 12;
+      else if (latestDelta >= 0) score = 9;
+      else if (latestDelta >= -1) score = 5;
+      else score = 2;
+
+      return {
+        label: "基準地価",
+        max: 15,
+        score,
+        reason: `最新 ${latestDelta >= 0 ? "+" : ""}${latestDelta.toFixed(1)}% / 5年平均 ${
+          avg5 === null ? "-" : `${avg5 >= 0 ? "+" : ""}${avg5.toFixed(1)}%`
+        }`,
+        warning: latestDelta < -1,
+      };
+    })();
+
+    const hazardItem = (() => {
+      const floodPenaltyMap = new Map<string, number>(
+        FLOOD_SEVERITY_OPTIONS.map((option) => [option.value, option.penalty])
+      );
+      const sedimentPenaltyMap = new Map<string, number>(
+        SEDIMENT_SEVERITY_OPTIONS.map((option) => [option.value, option.penalty])
+      );
+      const selected: Array<{ label: string; severity: string }> = [];
+      let totalPenalty = 0;
+
+      const addPenalty = (key: HazardTypeKey, selection: HazardSelection, isFlood: boolean) => {
+        if (!selection.enabled) return;
+        const penalty = isFlood
+          ? floodPenaltyMap.get(selection.severity) ?? 0
+          : sedimentPenaltyMap.get(selection.severity) ?? 0;
+        totalPenalty += penalty;
+        const severityLabel = isFlood
+          ? FLOOD_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ?? "未設定"
+          : SEDIMENT_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ?? "未設定";
+        selected.push({ label: HAZARD_TYPE_LABELS[key], severity: severityLabel });
+      };
+
+      addPenalty("flood", extraInfo.hazard.flood, true);
+      addPenalty("collapse", extraInfo.hazard.collapse, false);
+      addPenalty("debrisFlow", extraInfo.hazard.debrisFlow, false);
+      addPenalty("landslide", extraInfo.hazard.landslide, false);
+
+      const max = 15;
+      const score = clamp(max - totalPenalty, 0, max);
+      const reason =
+        selected.length === 0
+          ? "該当なし"
+          : selected.map((item) => `${item.label}:${item.severity}`).join(" / ");
+
+      return {
+        label: "ハザードマップ",
+        max,
+        score,
+        reason,
+        warning: score <= 8,
+      };
+    })();
+
+    const locationItem = (() => {
+      const auto = extraInfo.locationChecklist.auto;
+      const manual = extraInfo.locationChecklist.manual;
+      const manualLevels = Object.values(manual);
+      const hasManualInput = manualLevels.some((level) => level !== "UNKNOWN");
+      const hasAutoInput = !!auto;
+      if (!hasAutoInput && !hasManualInput) {
+        return {
+          label: "周辺環境チェック",
+          max: 20,
+          score: null as number | null,
+          reason: "住所からの自動取得または手動チェック入力で評価されます。",
+          warning: false,
+        };
+      }
+
+      let score = 10;
+      const stationMinutes = auto?.station?.durationMinutes ?? null;
+      if (stationMinutes !== null) {
+        if (stationMinutes <= 10) score += 4;
+        else if (stationMinutes <= 15) score += 2;
+        else if (stationMinutes > 20) score -= 2;
+      }
+      const convenienceMinutes = auto?.convenienceStore?.durationMinutes ?? null;
+      if (convenienceMinutes !== null) {
+        if (convenienceMinutes <= 7) score += 2;
+        else if (convenienceMinutes <= 12) score += 1;
+        else score -= 1;
+      }
+      const supermarketMinutes = auto?.supermarket?.durationMinutes ?? null;
+      if (supermarketMinutes !== null) {
+        if (supermarketMinutes <= 10) score += 2;
+        else if (supermarketMinutes <= 15) score += 1;
+        else score -= 1;
+      }
+      const busMinutes = auto?.busStop?.durationMinutes ?? null;
+      if (busMinutes !== null) {
+        if (busMinutes <= 8) score += 1;
+        else if (busMinutes > 15) score -= 1;
+      }
+      if ((auto?.cemeteryCount1500m ?? 0) > 0) score -= 2;
+      if ((auto?.wasteFacilityCount1500m ?? 0) > 0) score -= 2;
+      if ((auto?.factoryCount1500m ?? 0) > 0) score -= 2;
+      const railDistance = auto?.station?.distanceMeters ?? null;
+      if (railDistance !== null) {
+        if (railDistance <= 200) score -= 2;
+        else if (railDistance <= 400) score -= 1;
+      }
+      if ((auto?.schoolCount800m ?? 0) >= 1) score += 1;
+      if ((auto?.parkCount800m ?? 0) >= 1) score += 1;
+
+      const manualWeights: Record<keyof LocationManualChecks, number> = {
+        slopeAndSidewalk: 1,
+        nightLightingSafety: 2,
+        smellVibration: 2,
+        litterGraffiti: 1,
+        dangerousRoads: 2,
+      };
+      (Object.keys(manualWeights) as Array<keyof LocationManualChecks>).forEach((key) => {
+        const level = manual[key];
+        if (level === "GOOD") score += manualWeights[key];
+        if (level === "BAD") score -= manualWeights[key];
+      });
+
+      const safeScore = clamp(score, 0, 20);
+      const manualBadCount = manualLevels.filter((level) => level === "BAD").length;
+      const reason = `駅${stationMinutes === null ? "—" : `${stationMinutes}分`} / コンビニ${
+        convenienceMinutes === null ? "—" : `${convenienceMinutes}分`
+      } / スーパー${supermarketMinutes === null ? "—" : `${supermarketMinutes}分`} / 手動懸念${manualBadCount}件`;
+      return {
+        label: "周辺環境チェック",
+        max: 20,
+        score: safeScore,
+        reason,
+        warning: safeScore <= 8 || manualBadCount >= 2,
+      };
+    })();
+
+    const breakdown = [
+      comparableItem,
+      rentMarketItem,
+      populationItem,
+      ridershipItem,
+      vacancyItem,
+      landPriceItem,
+      hazardItem,
+      locationItem,
+    ];
+    const availableMax = breakdown.reduce((sum, item) => sum + (item.score === null ? 0 : item.max), 0);
+    const totalMax = breakdown.reduce((sum, item) => sum + item.max, 0);
+    const rawScore = breakdown.reduce((sum, item) => sum + (item.score ?? 0), 0);
+    const totalScore = availableMax > 0 ? Math.round((rawScore / availableMax) * 100) : 0;
+    const confidence = totalMax > 0 ? Math.round((availableMax / totalMax) * 100) : 0;
+
+    const grade =
+      totalScore >= 85
+        ? "A"
+        : totalScore >= 75
+          ? "B+"
+          : totalScore >= 65
+            ? "B"
+            : totalScore >= 55
+              ? "C"
+              : "D";
+    const decision = totalScore >= 80 ? "Go" : totalScore >= 65 ? "Hold" : "Recalculate";
+
+    const memoRiskFlags = ["騒音", "臭気", "治安", "管理不良", "空室多い", "事故物件"]
+      .filter((keyword) => extraInfo.memo.includes(keyword));
+
+    return {
+      totalScore,
+      confidence,
+      grade,
+      decision,
+      breakdown,
+      memoRiskFlags,
+    };
+  }, [
+    comparableSummary?.avgYield,
+    comparableSummary?.yield,
+    extraInfo.memo,
+    extraInfo.portyRentByFloor,
+    extraInfo.locationChecklist,
+    inputData.monthlyRent,
+    inputData.unitCount,
+    inputData.price,
+    landPriceSummary,
+    populationSummary,
+    ridershipSummary,
+    extraInfo.hazard,
+    vacancySummary,
+  ]);
+
+  const additionalBreakdownByLabel = useMemo(() => {
+    const lookup = new Map(additionalInfoScore.breakdown.map((item) => [item.label, item]));
+    return {
+      comparable: lookup.get("近似売り物件利回り") ?? null,
+      rentMarket: lookup.get("周辺家賃相場") ?? null,
+      population: lookup.get("人口推移") ?? null,
+      ridership: lookup.get("乗降客数") ?? null,
+      vacancy: lookup.get("空室率") ?? null,
+      landPrice: lookup.get("基準地価") ?? null,
+      hazard: lookup.get("ハザードマップ") ?? null,
+      location: lookup.get("周辺環境チェック") ?? null,
+    };
+  }, [additionalInfoScore.breakdown]);
+
+  const additionalScoreToneClass =
+    additionalInfoScore.decision === "Go"
+      ? "score-go"
+      : additionalInfoScore.decision === "Hold"
+        ? "score-hold"
+        : "score-recalculate";
+
+  const purchaseChecklistTotalCount = useMemo(
+    () =>
+      PURCHASE_CHECKLIST_SECTIONS.reduce(
+        (sum, section) => sum + section.items.length,
+        0
+      ),
+    []
+  );
+
+  const purchaseChecklistDoneCount = useMemo(() => {
+    const checked = extraInfo.purchaseChecklist;
+    return PURCHASE_CHECKLIST_SECTIONS.reduce((sum, section) => {
+      return (
+        sum + section.items.filter((item) => checked[item.id]).length
+      );
+    }, 0);
+  }, [extraInfo.purchaseChecklist]);
+
+  const rakumachiLandPriceUrl = useMemo(() => {
+    const lat = extraInfo.locationChecklist.auto?.originLat;
+    const lng = extraInfo.locationChecklist.auto?.originLng;
+    if (typeof lat !== "number" || typeof lng !== "number") return null;
+    const url = new URL("https://www.rakumachi.jp/property/land_price/map");
+    url.searchParams.set("lat", lat.toFixed(8));
+    url.searchParams.set("lng", lng.toFixed(8));
+    return url.toString();
+  }, [extraInfo.locationChecklist.auto?.originLat, extraInfo.locationChecklist.auto?.originLng]);
+
+  const getAdditionalItemScoreToneClass = (
+    item:
+      | {
+          score: number | null;
+          max: number;
+          warning?: boolean;
+        }
+      | null
+      | undefined
+  ) => {
+    if (!item || item.score === null || item.max <= 0) return "is-neutral";
+    const ratio = item.score / item.max;
+    if (ratio >= 0.8) return "is-good";
+    if (ratio >= 0.6) return "is-mid";
+    return "is-bad";
+  };
+
+  const setHazardEnabled = (key: HazardTypeKey, enabled: boolean) => {
+    setExtraInfo((prev) => ({
+      ...prev,
+      hazard: {
+        ...prev.hazard,
+        [key]: {
+          ...prev.hazard[key],
+          enabled,
+        },
+      },
+    }));
+  };
+
+  const setHazardSeverity = (key: HazardTypeKey, severity: string) => {
+    setExtraInfo((prev) => ({
+      ...prev,
+      hazard: {
+        ...prev.hazard,
+        [key]: {
+          ...prev.hazard[key],
+          severity,
+        },
+      },
+    }));
+  };
+
+  const updateLocationManual = (key: keyof LocationManualChecks, value: LocationManualLevel) => {
+    setExtraInfo((prev) => ({
+      ...prev,
+      locationChecklist: {
+        ...prev.locationChecklist,
+        manual: {
+          ...prev.locationChecklist.manual,
+          [key]: value,
+        },
+      },
+    }));
+  };
+
+  const updatePortyRentByFloor = (
+    floor: PortyFloorKey,
+    sigma: PortySigmaKey,
+    value: string
+  ) => {
+    const parsed =
+      value.trim().length === 0 ? null : Number(value.replace(/,/g, ""));
+    const safeValue = parsed === null || Number.isFinite(parsed) ? parsed : null;
+    setExtraInfo((prev) => ({
+      ...prev,
+      portyRentByFloor: {
+        ...prev.portyRentByFloor,
+        [floor]: {
+          ...prev.portyRentByFloor[floor],
+          [sigma]: safeValue,
+        },
+      },
+    }));
+  };
+
+  const updatePurchaseChecklist = (itemId: string, checked: boolean) => {
+    setExtraInfo((prev) => ({
+      ...prev,
+      purchaseChecklist: {
+        ...prev.purchaseChecklist,
+        [itemId]: checked,
+      },
+    }));
+  };
+
+  const fetchLocationChecklistByAddress = async (addressInput: string) => {
+    const candidateAddress = addressInput.trim();
+    if (!candidateAddress) return false;
+    setLocationLookupLoading(true);
+    setLocationLookupError(null);
+    try {
+      const response = await fetch("/api/location-checklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: candidateAddress }),
+      });
+      const raw = await response.text();
+      const payload = ((): {
+        error?: string;
+        data?: LocationChecklistAuto;
+      } => {
+        try {
+          return JSON.parse(raw) as { error?: string; data?: LocationChecklistAuto };
+        } catch {
+          return {};
+        }
+      })();
+      if (!response.ok || !payload?.data) {
+        throw new Error(
+          payload?.error ??
+            (raw ? `周辺環境データの取得に失敗しました。(${response.status})` : "周辺環境データの取得に失敗しました。")
+        );
+      }
+      setExtraInfo((prev) => ({
+        ...prev,
+        locationChecklist: {
+          ...prev.locationChecklist,
+          address: candidateAddress,
+          auto: payload.data ?? null,
+        },
+      }));
+      const stationName = payload.data?.station?.name?.trim() || null;
+      void fetchAreaStatsByAddress(candidateAddress, stationName);
+      return true;
+    } catch (error) {
+      setLocationLookupError(
+        error instanceof Error ? error.message : "周辺環境データの取得に失敗しました。"
+      );
+      return false;
+    } finally {
+      setLocationLookupLoading(false);
+    }
+  };
+
+  const handleFetchLocationChecklist = async () => {
+    const candidateAddress =
+      extraInfo.locationChecklist.address.trim() ||
+      selectedImport?.listing?.address?.trim() ||
+      comparableSummary?.address?.trim() ||
+      "";
+    if (!candidateAddress) {
+      setLocationLookupError("住所が未入力です。URL解析か手入力で住所を設定してください。");
+      return;
+    }
+    await fetchLocationChecklistByAddress(candidateAddress);
+  };
+
+  const fetchAreaStatsByAddress = async (
+    addressInput: string,
+    stationName: string | null,
+    options?: { force?: boolean }
+  ) => {
+    const candidateAddress = addressInput.trim();
+    if (!candidateAddress) return false;
+    const candidateStation = stationName?.trim() || null;
+    const lookupKey = `${candidateAddress}::${candidateStation ?? ""}`;
+    if (!options?.force && ridershipLookupKeyRef.current === lookupKey) {
+      return true;
+    }
+    setAreaStatsLookupLoading(true);
+    setAreaStatsLookupError(null);
+    setAreaStatsLookupNotice(null);
+    try {
+      const response = await fetch("/api/area-stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: candidateAddress,
+          stationName: candidateStation,
+        }),
+      });
+      const raw = await response.text();
+      const payload = ((): {
+        error?: string;
+        warnings?: string[];
+        data?: {
+          ridershipText?: string | null;
+        };
+      } => {
+        try {
+          return JSON.parse(raw) as {
+            error?: string;
+            warnings?: string[];
+            data?: { ridershipText?: string | null };
+          };
+        } catch {
+          return {};
+        }
+      })();
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ??
+            (raw
+              ? `乗降客数データの取得に失敗しました。(${response.status})`
+              : "乗降客数データの取得に失敗しました。")
+        );
+      }
+
+      const nextRidershipText = payload?.data?.ridershipText?.trim() ?? "";
+      if (!nextRidershipText) {
+        setAreaStatsLookupError("乗降客数データを取得できませんでした。");
+      } else {
+        setExtraInfo((prev) => ({ ...prev, ridershipText: nextRidershipText }));
+        ridershipLookupKeyRef.current = lookupKey;
+      }
+      const warnings =
+        Array.isArray(payload?.warnings) && payload.warnings.length
+          ? payload.warnings.filter((item) => !!item).join(" / ")
+          : null;
+      setAreaStatsLookupNotice(warnings);
+      return !!nextRidershipText;
+    } catch (error) {
+      setAreaStatsLookupError(
+        error instanceof Error ? error.message : "乗降客数データの取得に失敗しました。"
+      );
+      return false;
+    } finally {
+      setAreaStatsLookupLoading(false);
+    }
   };
 
   const handleReorder = (
@@ -690,12 +2561,29 @@ export default function Home() {
           const data = doc.data() as {
             name?: string;
             input?: PropertyInput;
+            listing?: ImportHistoryItem["listing"];
+            listingUrl?: string;
+            extraInfo?: ExtraInfoInput;
+            aiMessages?: { role: "user" | "assistant"; content: string }[];
             createdAt?: { toDate?: () => Date };
           };
+          const safeMessages = Array.isArray(data.aiMessages)
+            ? data.aiMessages.filter(
+                (msg) =>
+                  msg &&
+                  typeof msg === "object" &&
+                  typeof msg.role === "string" &&
+                  typeof msg.content === "string"
+              )
+            : [];
           return {
             id: doc.id,
             name: data.name ?? "無題",
             input: { ...DEFAULT_INPUT, ...(data.input ?? {}) },
+            listing: data.listing ?? null,
+            listingUrl: typeof data.listingUrl === "string" ? data.listingUrl : null,
+            extraInfo: normalizeExtraInfo(data.extraInfo),
+            aiMessages: safeMessages as { role: "user" | "assistant"; content: string }[],
             createdAt: data.createdAt?.toDate?.() ?? null,
           };
         });
@@ -727,6 +2615,7 @@ export default function Home() {
             url?: string;
             listing?: ImportHistoryItem["listing"];
             input?: PropertyInput;
+            extraInfo?: ExtraInfoInput;
             aiMessages?: { role: "user" | "assistant"; content: string }[];
             createdAt?: { toDate?: () => Date };
             updatedAt?: { toDate?: () => Date };
@@ -745,6 +2634,7 @@ export default function Home() {
             url: data.url ?? "",
             listing: data.listing ?? null,
             input: { ...DEFAULT_INPUT, ...(data.input ?? {}) },
+            extraInfo: normalizeExtraInfo(data.extraInfo),
             aiMessages: safeMessages as { role: "user" | "assistant"; content: string }[],
             createdAt: data.createdAt?.toDate?.() ?? null,
             updatedAt: data.updatedAt?.toDate?.() ?? null,
@@ -814,6 +2704,10 @@ export default function Home() {
         userId: user.uid,
         name,
         input: inputData,
+        listing: selectedImport?.listing ?? null,
+        listingUrl: selectedImport?.url ?? null,
+        extraInfo,
+        aiMessages,
         createdAt: serverTimestamp(),
       });
       setSaveName("");
@@ -826,8 +2720,36 @@ export default function Home() {
 
   const handleLoad = (item: SavedSimulation) => {
     setInputData({ ...DEFAULT_INPUT, ...item.input });
+    setExtraInfo(normalizeExtraInfo(item.extraInfo));
+    setAiMessages(item.aiMessages ?? []);
+    setAiCacheHit(false);
+    setAiError(null);
     setAutoFilledKeys([]);
-    setSelectedImportId(null);
+    const hasListing = !!item.listing;
+    const rawUrl = item.listingUrl ? normalizeUrl(item.listingUrl) : "";
+    if (hasListing || rawUrl) {
+      const id = rawUrl || `saved:${item.id}`;
+      setImportHistory((prev) => {
+        const nextItem: ImportHistoryItem = {
+          id,
+          url: rawUrl,
+          listing: item.listing ?? null,
+          input: { ...DEFAULT_INPUT, ...item.input },
+          autoFilled: [],
+          createdAt: item.createdAt?.getTime?.() ?? Date.now(),
+        };
+        const existingIndex = prev.findIndex((entry) => entry.id === id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next.splice(existingIndex, 1, nextItem);
+          return next;
+        }
+        return [nextItem, ...prev].slice(0, 5);
+      });
+      setSelectedImportId(id);
+    } else {
+      setSelectedImportId(null);
+    }
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -869,9 +2791,11 @@ export default function Home() {
     }
     void (async () => {
       let cachedMessages: { role: "user" | "assistant"; content: string }[] = [];
+      let cachedExtraInfo = createDefaultExtraInfo();
       if (url && user) {
         const cached = await loadAnalysisCache(url);
         const cachedRaw = cached?.aiMessages;
+        cachedExtraInfo = normalizeExtraInfo(cached?.extraInfo);
         if (Array.isArray(cachedRaw)) {
           cachedMessages = cachedRaw.filter(
             (msg) =>
@@ -882,6 +2806,7 @@ export default function Home() {
           ) as { role: "user" | "assistant"; content: string }[];
         }
       }
+      setExtraInfo(cachedExtraInfo);
 
       if (cachedMessages.length > 0) {
         setAiMessages(cachedMessages);
@@ -899,12 +2824,14 @@ export default function Home() {
           input: data,
           listing: payload.listing ?? null,
           aiMessages: cachedMessages,
+          extraInfo: cachedExtraInfo,
         });
         void saveAnalysisCache({
           url,
           input: data,
           listing: payload.listing ?? null,
           aiMessages: cachedMessages,
+          extraInfo: cachedExtraInfo,
         });
       }
     })();
@@ -917,9 +2844,11 @@ export default function Home() {
   const handleImportSelect = (id: string) => {
     const item = importHistory.find((entry) => entry.id === id);
     if (!item) return;
-    setInputData(item.input);
+    setInputData({ ...DEFAULT_INPUT, ...item.input });
     setAutoFilledKeys(item.autoFilled);
     setSelectedImportId(id);
+    analysisRunUrlRef.current = item.url ?? null;
+    analysisRunIdRef.current = null;
     setHasViewedResults(false);
     setHasCompletedSteps(false);
     setSelectedYear(1);
@@ -928,9 +2857,11 @@ export default function Home() {
     void (async () => {
       if (!user || !item.url) {
         setAiMessages([]);
+        setExtraInfo(createDefaultExtraInfo());
         return;
       }
       const cached = await loadAnalysisCache(item.url);
+      setExtraInfo(normalizeExtraInfo(cached?.extraInfo));
       const cachedRaw = cached?.aiMessages;
       if (Array.isArray(cachedRaw)) {
         const cachedMessages = cachedRaw.filter(
@@ -954,6 +2885,7 @@ export default function Home() {
   const handleAnalysisRunSelect = (run: AnalysisRunItem) => {
     const nextInput = { ...DEFAULT_INPUT, ...(run.input ?? {}) };
     setInputData(nextInput);
+    setExtraInfo(normalizeExtraInfo(run.extraInfo));
     setAutoFilledKeys([]);
     if (run.url) {
       const id = run.url;
@@ -1001,6 +2933,7 @@ export default function Home() {
 
   const handleImportStart = () => {
     setInputData(DEFAULT_INPUT);
+    setExtraInfo(createDefaultExtraInfo());
     setAutoFilledKeys([]);
     setSelectedImportId(null);
     setHasImportResult(false);
@@ -1080,23 +3013,26 @@ export default function Home() {
 
   const saveAnalysisCache = async (params: {
     url: string;
-    input: PropertyInput;
-    listing: ImportHistoryItem["listing"];
-    aiMessages: { role: "user" | "assistant"; content: string }[];
+    input?: PropertyInput;
+    listing?: ImportHistoryItem["listing"];
+    aiMessages?: { role: "user" | "assistant"; content: string }[];
+    extraInfo?: ExtraInfoInput;
   }) => {
     const ref = getCacheDocRef(params.url);
     if (!ref || !user) return;
     try {
+      const payload: Record<string, unknown> = {
+        userId: user.uid,
+        url: normalizeUrl(params.url),
+        updatedAt: serverTimestamp(),
+      };
+      if (params.input) payload.input = params.input;
+      if ("listing" in params) payload.listing = params.listing ?? null;
+      if (params.aiMessages) payload.aiMessages = params.aiMessages;
+      if (params.extraInfo) payload.extraInfo = params.extraInfo;
       await setDoc(
         ref,
-        {
-          userId: user.uid,
-          url: normalizeUrl(params.url),
-          input: params.input,
-          listing: params.listing ?? null,
-          aiMessages: params.aiMessages,
-          updatedAt: serverTimestamp(),
-        },
+        payload,
         { merge: true }
       );
     } catch (error) {
@@ -1109,6 +3045,7 @@ export default function Home() {
     input: PropertyInput;
     listing: ImportHistoryItem["listing"];
     aiMessages: { role: "user" | "assistant"; content: string }[];
+    extraInfo: ExtraInfoInput;
   }) => {
     if (!user) return null;
     try {
@@ -1118,6 +3055,7 @@ export default function Home() {
         input: params.input,
         listing: params.listing ?? null,
         aiMessages: params.aiMessages,
+        extraInfo: params.extraInfo,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -1140,6 +3078,23 @@ export default function Home() {
     () => (selectedImportId ? importHistory.find((item) => item.id === selectedImportId) ?? null : null),
     [importHistory, selectedImportId]
   );
+
+  useEffect(() => {
+    const listingAddress = selectedImport?.listing?.address?.trim() ?? "";
+    if (!listingAddress) return;
+    setExtraInfo((prev) => {
+      const currentAddress = prev.locationChecklist.address.trim();
+      if (currentAddress === listingAddress) return prev;
+      return {
+        ...prev,
+        locationChecklist: {
+          ...prev.locationChecklist,
+          address: listingAddress,
+        },
+      };
+    });
+    void fetchLocationChecklistByAddress(listingAddress);
+  }, [selectedImport?.id, selectedImport?.listing?.address]);
 
   const handleFieldTouch = (key: keyof PropertyInput) => {
     setAutoFilledKeys((prev) => prev.filter((item) => item !== key));
@@ -1220,10 +3175,12 @@ export default function Home() {
             input: inputData,
             listing: selectedImport?.listing ?? null,
             aiMessages: finalMessages,
+            extraInfo,
           });
           if (analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
             void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
               aiMessages: finalMessages,
+              extraInfo,
               updatedAt: serverTimestamp(),
             }).catch((error) => {
               console.warn("analysis run update failed", error);
@@ -1242,6 +3199,28 @@ export default function Home() {
     event.preventDefault();
     void askAi(aiInput);
   };
+
+  useEffect(() => {
+    if (!user) return;
+    const cacheUrl = selectedImport?.url;
+    if (!cacheUrl) return;
+    if (analysisRunUrlRef.current !== cacheUrl) return;
+    const timer = window.setTimeout(() => {
+      void saveAnalysisCache({
+        url: cacheUrl,
+        extraInfo,
+      });
+      if (analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
+        void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
+          extraInfo,
+          updatedAt: serverTimestamp(),
+        }).catch((error) => {
+          console.warn("analysis run extra info update failed", error);
+        });
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [extraInfo, selectedImport?.url, user]);
 
   useEffect(() => {
     if (!pendingAiPromptId) return;
@@ -1566,6 +3545,12 @@ export default function Home() {
   const kpiCcrPreTax = equity > 0 ? (kpiResult.cashFlowPreTax / equity) * 100 : Number.NaN;
   const kpiCcrPostTax = equity > 0 ? (kpiResult.cashFlowPostTax / equity) * 100 : Number.NaN;
   const kpiAtcf = kpiResult.cashFlowPostTax;
+  const tenYearCashFlowCumulative = results
+    .slice(0, Math.min(10, results.length))
+    .reduce((sum, result) => sum + result.cashFlowPostTax, 0);
+  const kpiCashFlow10yWithExit = inputData.exitEnabled
+    ? tenYearCashFlowCumulative + exitNetProceeds
+    : Number.NaN;
   const kpiDeadCrossLabel = firstDeadCrossYear ? `${firstDeadCrossYear}年目` : "なし";
   const getRiskByThreshold = (
     value: number,
@@ -1664,6 +3649,16 @@ export default function Home() {
       risk: getRiskByZero(kpiAtcf),
     },
     {
+      id: "cashFlow10yWithExit",
+      label: "10年CF累計+売却手残り",
+      value: kpiCashFlow10yWithExit,
+      format: "yen",
+      note: inputData.exitEnabled
+        ? `1〜10年CF + 売却手残り（${exitYear}年目）`
+        : "出口戦略を有効化すると表示",
+      risk: getRiskByZero(kpiCashFlow10yWithExit),
+    },
+    {
       id: "deadCross",
       label: "デッドクロス",
       value: kpiDeadCrossLabel,
@@ -1714,16 +3709,17 @@ export default function Home() {
       </span>
     );
   };
+  const kpiRiskById = new Map(kpiItems.map((item) => [item.id, item.risk]));
   const scoreCandidates: KpiRisk[] = [
-    kpiItems[0].risk,
-    kpiItems[1].risk,
-    kpiItems[2].risk,
-    kpiItems[3].risk,
-    kpiItems[5].risk,
-    kpiItems[7].risk,
-    kpiItems[8].risk,
-    kpiItems[9].risk,
-  ];
+    kpiRiskById.get("dscr"),
+    kpiRiskById.get("dscrStress"),
+    kpiRiskById.get("repaymentRatio"),
+    kpiRiskById.get("ber"),
+    kpiRiskById.get("yieldGap"),
+    kpiRiskById.get("ccrPostTax"),
+    kpiRiskById.get("atcf"),
+    kpiRiskById.get("deadCross"),
+  ].filter((risk): risk is KpiRisk => typeof risk === "string");
   const safetyScore =
     scoreCandidates.length > 0
       ? Math.round(
@@ -1745,6 +3741,195 @@ export default function Home() {
     if (item.format === "ratio") return formatRatio(numeric);
     return formatPercent(numeric);
   };
+
+  const investmentScore = useMemo(() => {
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    const toNumber = (value: number | "") => (value === "" ? null : Number(value));
+
+    const walkMinutes = toNumber(investmentInput.walkMinutes);
+    const rentGapPercent = toNumber(investmentInput.rentGapPercent);
+
+    const demandTrendScore =
+      investmentInput.demandTrend === "UP"
+        ? 10
+        : investmentInput.demandTrend === "FLAT"
+          ? 6
+          : investmentInput.demandTrend === "DOWN"
+            ? 2
+            : 6;
+    const targetFitScore =
+      investmentInput.targetFit === "HIGH"
+        ? 10
+        : investmentInput.targetFit === "MID"
+          ? 6
+          : investmentInput.targetFit === "LOW"
+            ? 2
+            : 6;
+    const demandScore = clamp(demandTrendScore + targetFitScore, 0, 20);
+
+    const walkScore =
+      walkMinutes === null
+        ? 6
+        : walkMinutes <= 7
+          ? 12
+          : walkMinutes <= 10
+            ? 9
+            : walkMinutes <= 12
+              ? 6
+              : walkMinutes <= 15
+                ? 3
+                : 0;
+    const convenienceScore =
+      investmentInput.convenience === "HIGH"
+        ? 8
+        : investmentInput.convenience === "MID"
+          ? 5
+          : investmentInput.convenience === "LOW"
+            ? 2
+            : 5;
+    const locationScore = clamp(walkScore + convenienceScore, 0, 20);
+
+    const hazardScore =
+      investmentInput.hazardRisk === "NONE"
+        ? 10
+        : investmentInput.hazardRisk === "LOW"
+          ? 7
+          : investmentInput.hazardRisk === "HIGH"
+            ? 0
+            : 5;
+
+    const rentGapScore =
+      rentGapPercent === null
+        ? 10
+        : rentGapPercent <= 0
+          ? 14
+          : rentGapPercent <= 3
+            ? 12
+            : rentGapPercent <= 5
+              ? 10
+              : rentGapPercent <= 8
+                ? 7
+                : rentGapPercent <= 10
+                  ? 5
+                  : rentGapPercent <= 15
+                    ? 3
+                    : 0;
+    const competitionScore =
+      investmentInput.competitionLevel === "LOW"
+        ? 6
+        : investmentInput.competitionLevel === "MID"
+          ? 4
+          : investmentInput.competitionLevel === "HIGH"
+            ? 1
+            : 4;
+    const rentScore = clamp(rentGapScore + competitionScore, 0, 20);
+
+    const base70 = clamp(demandScore + locationScore + hazardScore + rentScore, 0, 70);
+    const base80 = Math.round((base70 / 70) * 80);
+    const fieldAdjustment = clamp(investmentInput.fieldAdjustment, -20, 20);
+    const totalScore = clamp(base80 + fieldAdjustment, 0, 100);
+
+    const filledCount = [
+      investmentInput.demandTrend !== "UNKNOWN",
+      investmentInput.targetFit !== "UNKNOWN",
+      walkMinutes !== null,
+      investmentInput.convenience !== "UNKNOWN",
+      investmentInput.hazardRisk !== "UNKNOWN",
+      rentGapPercent !== null,
+      investmentInput.competitionLevel !== "UNKNOWN",
+    ].filter(Boolean).length;
+    const confidence = Math.round((filledCount / 7) * 100);
+
+    const grade =
+      totalScore >= 85
+        ? "A"
+        : totalScore >= 75
+          ? "B+"
+          : totalScore >= 65
+            ? "B"
+            : totalScore >= 55
+              ? "C"
+              : "D";
+    const decision =
+      totalScore >= 80 && (rentGapPercent === null || rentGapPercent <= 5)
+        ? "Go"
+        : totalScore >= 65
+          ? "Hold"
+          : "Recalculate";
+
+    const demandReason =
+      investmentInput.demandTrend === "UNKNOWN" || investmentInput.targetFit === "UNKNOWN"
+        ? "世帯/ターゲットの情報が未入力のため中立評価です。"
+        : investmentInput.demandTrend === "DOWN" || investmentInput.targetFit === "LOW"
+          ? "単身需要かターゲット適合が弱く、需要面で注意が必要です。"
+          : "単身需要とターゲット適合は良好と判断しました。";
+
+    const locationReason =
+      walkMinutes === null
+        ? "実歩行分数が未入力のため中立評価です。"
+        : walkMinutes > 12
+          ? "駅距離が長めで、客付けに不利な可能性があります。"
+          : walkMinutes <= 10
+            ? "駅徒歩10分以内で利便性は良好です。"
+            : "駅距離は許容範囲ですが、注意ラインです。";
+
+    const hazardReason =
+      investmentInput.hazardRisk === "UNKNOWN"
+        ? "ハザード情報が未確認のため中立評価です。"
+        : investmentInput.hazardRisk === "HIGH"
+          ? "ハザード該当のためリスクが高いです。"
+          : investmentInput.hazardRisk === "LOW"
+            ? "軽度のハザード該当があり、注意が必要です。"
+            : "大きなハザード該当は見当たりません。";
+
+    const rentReason =
+      rentGapPercent === null
+        ? "想定家賃と相場のギャップが未入力のため中立評価です。"
+        : rentGapPercent > 10
+          ? "想定家賃が相場より高く、調整が必要です。"
+          : rentGapPercent > 5
+            ? "想定家賃がやや強気な設定です。"
+            : rentGapPercent <= 0
+              ? "想定家賃は相場内で堅実です。"
+              : "想定家賃は許容範囲内です。";
+
+    return {
+      base80,
+      totalScore,
+      fieldAdjustment,
+      confidence,
+      grade,
+      decision,
+      breakdown: [
+        {
+          label: "需要・ターゲット適合",
+          score: demandScore,
+          max: 20,
+          reason: demandReason,
+        },
+        {
+          label: "立地・利便性",
+          score: locationScore,
+          max: 20,
+          reason: locationReason,
+        },
+        {
+          label: "災害リスク",
+          score: hazardScore,
+          max: 10,
+          reason: hazardReason,
+          warning: investmentInput.hazardRisk === "HIGH",
+        },
+        {
+          label: "家賃妥当性・競合",
+          score: rentScore,
+          max: 20,
+          reason: rentReason,
+        },
+      ],
+    };
+  }, [investmentInput]);
+
   const isCorporateTax = inputData.taxType === "CORPORATE";
   const corporateMinimumTax = Math.max(0, inputData.corporateMinimumTax || 0);
   const getCorporateTax = (result: YearlyResult) =>
@@ -2091,6 +4276,14 @@ export default function Home() {
                   <td className="value input">{formatYen(inputData.loanAmount)}</td>
                 </tr>
                 <tr>
+                  <td className="label">融資対象</td>
+                  <td className="value input">
+                    {inputData.loanCoverageMode === "PRICE_AND_INITIAL"
+                      ? "物件価格+初期費用"
+                      : "物件価格のみ"}
+                  </td>
+                </tr>
+                <tr>
                   <td className="label">金利</td>
                   <td className="value input">{formatPercent(inputData.interestRate)}</td>
                 </tr>
@@ -2184,6 +4377,211 @@ export default function Home() {
                 </div>
               );
             })}
+          </div>
+        ) : null}
+      </div>
+    ),
+    investmentScore: (
+      <div className="sheet-card investment-card">
+        <div className="table-head">
+          <h2 className="table-title">投資妙味スコア（暫定）</h2>
+          <div className="table-actions">
+            <div className="table-controls">
+              <span className="investment-badge">ベース80 / 補正±20</span>
+              <button
+                type="button"
+                className="section-toggle"
+                onClick={() => setInvestmentEditOpen((prev) => !prev)}
+              >
+                {investmentEditOpen ? "入力を閉じる" : "入力を編集"}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="section-toggle"
+              onClick={() => toggleSection("investmentScore")}
+              aria-expanded={openSections.investmentScore}
+            >
+              {openSections.investmentScore ? "▼ 閉じる" : "▶ 開く"}
+            </button>
+          </div>
+        </div>
+        {openSections.investmentScore ? (
+          <div className="investment-body">
+            <div className="investment-summary">
+              <div className="investment-total">
+                <div className="investment-score">{investmentScore.totalScore}</div>
+                <div className="investment-grade">Grade {investmentScore.grade}</div>
+                <div className={`investment-decision decision-${investmentScore.decision.toLowerCase()}`}>
+                  {investmentScore.decision}
+                </div>
+              </div>
+              <div className="investment-metrics">
+                <div className="investment-metric">
+                  <span>ベース</span>
+                  <strong>{investmentScore.base80}</strong>
+                </div>
+                <div className="investment-metric">
+                  <span>現地補正</span>
+                  <strong>{investmentScore.fieldAdjustment >= 0 ? "+" : ""}{investmentScore.fieldAdjustment}</strong>
+                </div>
+                <div className="investment-metric">
+                  <span>信頼度</span>
+                  <strong>{investmentScore.confidence}%</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="investment-breakdown">
+              {investmentScore.breakdown.map((item) => (
+                <div key={item.label} className="investment-row">
+                  <div className="investment-row-head">
+                    <span className="investment-row-title">{item.label}</span>
+                    <span className={`investment-row-score${item.warning ? " is-warn" : ""}`}>
+                      {item.score}/{item.max}
+                    </span>
+                  </div>
+                  <p className="investment-row-note">{item.reason}</p>
+                </div>
+              ))}
+            </div>
+
+            {investmentEditOpen ? (
+              <div className="investment-inputs form-card">
+                <div className="investment-input-grid">
+                  <label>
+                    単身世帯トレンド
+                    <select
+                      value={investmentInput.demandTrend}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "demandTrend",
+                          e.target.value as InvestmentDemandTrend
+                        )
+                      }
+                    >
+                      <option value="UNKNOWN">未入力</option>
+                      <option value="UP">増加</option>
+                      <option value="FLAT">横ばい</option>
+                      <option value="DOWN">減少</option>
+                    </select>
+                  </label>
+                  <label>
+                    ターゲット適合
+                    <select
+                      value={investmentInput.targetFit}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "targetFit",
+                          e.target.value as InvestmentTargetFit
+                        )
+                      }
+                    >
+                      <option value="UNKNOWN">未入力</option>
+                      <option value="HIGH">高い</option>
+                      <option value="MID">普通</option>
+                      <option value="LOW">低い</option>
+                    </select>
+                  </label>
+                  <label>
+                    実歩行（分）
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={investmentInput.walkMinutes}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "walkMinutes",
+                          e.target.value === "" ? "" : Number(e.target.value)
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    生活利便性
+                    <select
+                      value={investmentInput.convenience}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "convenience",
+                          e.target.value as InvestmentConvenience
+                        )
+                      }
+                    >
+                      <option value="UNKNOWN">未入力</option>
+                      <option value="HIGH">高い</option>
+                      <option value="MID">普通</option>
+                      <option value="LOW">低い</option>
+                    </select>
+                  </label>
+                  <label>
+                    ハザード該当
+                    <select
+                      value={investmentInput.hazardRisk}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "hazardRisk",
+                          e.target.value as InvestmentHazardRisk
+                        )
+                      }
+                    >
+                      <option value="UNKNOWN">未確認</option>
+                      <option value="NONE">該当なし</option>
+                      <option value="LOW">注意</option>
+                      <option value="HIGH">高リスク</option>
+                    </select>
+                  </label>
+                  <label>
+                    家賃ギャップ（%）
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={investmentInput.rentGapPercent}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "rentGapPercent",
+                          e.target.value === "" ? "" : Number(e.target.value)
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    募集過多レベル
+                    <select
+                      value={investmentInput.competitionLevel}
+                      onChange={(e) =>
+                        updateInvestmentInput(
+                          "competitionLevel",
+                          e.target.value as InvestmentCompetition
+                        )
+                      }
+                    >
+                      <option value="UNKNOWN">未入力</option>
+                      <option value="LOW">少ない</option>
+                      <option value="MID">普通</option>
+                      <option value="HIGH">多い</option>
+                    </select>
+                  </label>
+                  <label>
+                    現地補正（±20）
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={-20}
+                      max={20}
+                      value={investmentInput.fieldAdjustment}
+                      onChange={(e) =>
+                        updateInvestmentInput("fieldAdjustment", Number(e.target.value))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="form-note">
+                  ※無料範囲では手入力で補完します。Google系の自動取得は後付け想定。
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -2397,6 +4795,10 @@ export default function Home() {
                 <div className="detail-item">
                   <span className="detail-label">売却手残り (ATCF)</span>
                   <span className="detail-value">{formatYen(exitNetProceeds)}</span>
+                </div>
+                <div className="detail-item">
+                  <span className="detail-label">10年CF累計+売却手残り</span>
+                  <span className="detail-value">{formatYen(kpiCashFlow10yWithExit)}</span>
                 </div>
                 <div className="detail-item">
                   <span className="detail-label">IRR</span>
@@ -3143,6 +5545,870 @@ export default function Home() {
                     ))}
                   </SortableContext>
                 </DndContext>
+              </div>
+            </div>
+          </section>
+
+          <section className="sheet extra-info-section">
+            <div className="sheet-card extra-info-card">
+              <div className="table-head">
+                <h2 className="table-title">物件の追加情報</h2>
+                {rakumachiLandPriceUrl ? (
+                  <a
+                    className="extra-info-rakumachi-link"
+                    href={rakumachiLandPriceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    楽待へのリンク
+                  </a>
+                ) : (
+                  <span className="extra-info-rakumachi-link is-disabled">楽待へのリンク</span>
+                )}
+              </div>
+              <div className="extra-info-grid">
+                <div className="extra-info-top-row">
+                  <div className="extra-info-score extra-info-score-side">
+                    <div className="extra-info-score-main">
+                      <div className={`extra-info-score-value ${additionalScoreToneClass}`}>
+                        {additionalInfoScore.totalScore}
+                      </div>
+                      <div className="extra-info-score-meta">
+                        <div className={`extra-info-score-grade ${additionalScoreToneClass}`}>
+                          追加情報スコア / Grade {additionalInfoScore.grade}
+                        </div>
+                        <div className="extra-info-confidence">信頼度 {additionalInfoScore.confidence}%</div>
+                      </div>
+                      <div
+                        className={`extra-info-decision decision-${additionalInfoScore.decision.toLowerCase()}`}
+                      >
+                        {additionalInfoScore.decision}
+                      </div>
+                    </div>
+                    {additionalInfoScore.memoRiskFlags.length > 0 ? (
+                      <div className="extra-info-risk-flags">
+                        {additionalInfoScore.memoRiskFlags.map((flag) => (
+                          <span key={flag}>{flag}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="extra-info-block extra-info-block-memo">
+                    <div className="extra-info-title-row">
+                      <div className="extra-info-title">メモ</div>
+                    </div>
+                    <textarea
+                      className="extra-info-textarea"
+                      placeholder="物件の所感や現地メモを入力"
+                      value={extraInfo.memo}
+                      onChange={(e) =>
+                        setExtraInfo((prev) => ({ ...prev, memo: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="extra-info-scroll-note">
+                  横にスクロールすると「失敗防止チェックリスト」「周辺家賃相場」「人口推移」「乗降客数」「周辺環境チェック」「空室率」「ハザードマップ」「基準地価」まで表示されます。
+                </div>
+                <div className="extra-info-scroll">
+                  <div className="extra-info-row">
+                <div className="extra-info-block extra-info-block-checklist">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">
+                      <a
+                        className="extra-info-title-link"
+                        href="https://koharamasanori.com/real-estate-investment-failure-rate/#index_id13"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        失敗防止チェックリスト
+                      </a>
+                    </div>
+                    <button
+                      type="button"
+                      className="chip-button"
+                      onClick={() => setShowCompletedChecklist((prev) => !prev)}
+                    >
+                      {showCompletedChecklist ? "完了を隠す" : "完了を表示"}
+                    </button>
+                  </div>
+                  <div className="extra-info-title-note">
+                    確認済みをチェックすると、通常表示では項目が消えます。
+                  </div>
+                  <div className="extra-info-checklist-progress">
+                    完了 {purchaseChecklistDoneCount} / {purchaseChecklistTotalCount}
+                  </div>
+                  <div className="extra-info-checklist">
+                    {PURCHASE_CHECKLIST_SECTIONS.map((section) => {
+                      const visibleItems = section.items.filter(
+                        (item) => showCompletedChecklist || !extraInfo.purchaseChecklist[item.id]
+                      );
+                      if (visibleItems.length === 0) return null;
+                      return (
+                        <div key={section.id} className="extra-info-checklist-section">
+                          <div className="extra-info-checklist-section-title">{section.title}</div>
+                          <div className="extra-info-checklist-items">
+                            {visibleItems.map((item) => {
+                              const checked = !!extraInfo.purchaseChecklist[item.id];
+                              return (
+                                <label
+                                  key={item.id}
+                                  className={`extra-info-checklist-item${
+                                    checked ? " is-done" : ""
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) =>
+                                      updatePurchaseChecklist(item.id, event.target.checked)
+                                    }
+                                  />
+                                  <span>{renderPurchaseChecklistLabel(item.label)}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!showCompletedChecklist &&
+                    purchaseChecklistDoneCount >= purchaseChecklistTotalCount ? (
+                      <div className="extra-info-checklist-empty">
+                        すべて確認済みです。必要なら「完了を表示」で再確認できます。
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">楽街の近似売り物件の利回り</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.comparable?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.comparable)}`}
+                    >
+                      {additionalBreakdownByLabel.comparable?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.comparable?.score}/${additionalBreakdownByLabel.comparable?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.comparable?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.comparable.reason}</div>
+                  ) : null}
+                  <textarea
+                    className="extra-info-textarea"
+                    placeholder="ここにコピペしてください"
+                    value={extraInfo.comparableText}
+                    onChange={(e) =>
+                      setExtraInfo((prev) => ({ ...prev, comparableText: e.target.value }))
+                    }
+                  />
+                  {comparableSummary ? (
+                    <div className="extra-info-summary">
+                      <div><span>販売価格</span><strong>{comparableSummary.salePrice ?? "—"}</strong></div>
+                      <div><span>表面利回り</span><strong>{comparableSummary.yield ?? "—"}</strong></div>
+                      <div><span>想定年間収入</span><strong>{comparableSummary.annualIncome ?? "—"}</strong></div>
+                      <div><span>所在地</span><strong>{comparableSummary.address ?? "—"}</strong></div>
+                      <div><span>交通</span><strong>{comparableSummary.access ?? "—"}</strong></div>
+                      <div><span>建物構造</span><strong>{comparableSummary.structure ?? "—"}</strong></div>
+                      <div><span>築年月</span><strong>{comparableSummary.builtYear ?? "—"}</strong></div>
+                      <div><span>土地権利</span><strong>{comparableSummary.landRight ?? "—"}</strong></div>
+                      <div><span>建物面積</span><strong>{comparableSummary.buildingArea ?? "—"}</strong></div>
+                      <div><span>土地面積</span><strong>{comparableSummary.landArea ?? "—"}</strong></div>
+                      <div><span>取引態様</span><strong>{comparableSummary.transactionType ?? "—"}</strong></div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">人口推移</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.population?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.population)}`}
+                    >
+                      {additionalBreakdownByLabel.population?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.population?.score}/${additionalBreakdownByLabel.population?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.population?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.population.reason}</div>
+                  ) : null}
+                  <textarea
+                    className="extra-info-textarea"
+                    placeholder="人口推移データをコピペ"
+                    value={extraInfo.populationText}
+                    onChange={(e) =>
+                      setExtraInfo((prev) => ({ ...prev, populationText: e.target.value }))
+                    }
+                  />
+                  {populationSummary ? (
+                    <div className="extra-info-summary">
+                      <div>
+                        <span>エリア</span>
+                        <strong>{populationSummary.area ?? "—"}</strong>
+                      </div>
+                      <div>
+                        <span>人口</span>
+                        <strong>
+                          {populationSummary.population ?? "—"}
+                          {populationSummary.populationDelta ? (
+                            <>
+                              {" "}
+                              {renderDelta(populationSummary.populationDelta, "%")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>世帯数</span>
+                        <strong>
+                          {populationSummary.households ?? "—"}
+                          {populationSummary.householdsDelta ? (
+                            <>
+                              {" "}
+                              {renderDelta(populationSummary.householdsDelta, "%")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : null}
+                  {populationSummary?.yearlyRows?.length ? (
+                    <div className="extra-info-table">
+                      <div className="extra-info-table-head">
+                        <span>西暦</span>
+                        <span>人口</span>
+                        <span>世帯数</span>
+                      </div>
+                      {populationSummary.yearlyRows.map((row) => (
+                        <div key={row.year} className="extra-info-table-row">
+                          <span>{row.year}</span>
+                          <span>
+                            {row.population ?? "—"}
+                            {row.populationDelta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.populationDelta, "%")}
+                              </>
+                            ) : null}
+                          </span>
+                          <span>
+                            {row.households ?? "—"}
+                            {row.householdsDelta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.householdsDelta, "%")}
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">周辺家賃相場（ポルティ査定）</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.rentMarket?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.rentMarket)}`}
+                    >
+                      {additionalBreakdownByLabel.rentMarket?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.rentMarket?.score}/${additionalBreakdownByLabel.rentMarket?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.rentMarket?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.rentMarket.reason}</div>
+                  ) : null}
+                  <div className="extra-info-title-note">
+                    各階の査定値を入力してください（単位: 円/月）。
+                  </div>
+                  <div className="extra-info-rent-table">
+                    <div className="extra-info-rent-head">
+                      <span>階</span>
+                      {PORTY_SIGMA_COLUMNS.map((column) => (
+                        <span key={`rent-head-${column.key}`}>{column.label}</span>
+                      ))}
+                    </div>
+                    {(Object.keys(PORTY_FLOOR_LABELS) as PortyFloorKey[]).map((floor) => (
+                      <div key={`rent-row-${floor}`} className="extra-info-rent-row">
+                        <span className="extra-info-rent-floor">{PORTY_FLOOR_LABELS[floor]}</span>
+                        {PORTY_SIGMA_COLUMNS.map((column) => (
+                          <input
+                            key={`rent-input-${floor}-${column.key}`}
+                            type="number"
+                            inputMode="decimal"
+                            className="field-input extra-info-rent-input"
+                            value={extraInfo.portyRentByFloor[floor][column.key] ?? ""}
+                            onChange={(event) =>
+                              updatePortyRentByFloor(floor, column.key, event.target.value)
+                            }
+                            placeholder="例: 87000"
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">乗降客数</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.ridership?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.ridership)}`}
+                    >
+                      {additionalBreakdownByLabel.ridership?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.ridership?.score}/${additionalBreakdownByLabel.ridership?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.ridership?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.ridership.reason}</div>
+                  ) : null}
+                  {areaStatsLookupError ? (
+                    <div className="extra-info-location-error">{areaStatsLookupError}</div>
+                  ) : null}
+                  {areaStatsLookupNotice ? (
+                    <div className="extra-info-location-note">{areaStatsLookupNotice}</div>
+                  ) : null}
+                  <textarea
+                    className="extra-info-textarea"
+                    placeholder={areaStatsLookupLoading ? "自動取得中..." : "最寄駅の乗降客数データを自動取得"}
+                    value={extraInfo.ridershipText}
+                    onChange={(e) =>
+                      setExtraInfo((prev) => ({ ...prev, ridershipText: e.target.value }))
+                    }
+                  />
+                  {ridershipSummary ? (
+                    <div className="extra-info-summary">
+                      <div>
+                        <span>駅名</span>
+                        <strong>{ridershipSummary.station ?? "—"}</strong>
+                      </div>
+                      <div>
+                        <span>乗降客数</span>
+                        <strong>
+                          {ridershipSummary.ridership ?? "—"}
+                          {ridershipSummary.delta ? (
+                            <>
+                              {" "}
+                              {renderDelta(ridershipSummary.delta, "%")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : null}
+                  {ridershipSummary?.yearlyRows?.length ? (
+                    <div className="extra-info-table">
+                      <div className="extra-info-table-head">
+                        <span>西暦</span>
+                        <span>乗降客数</span>
+                      </div>
+                      {ridershipSummary.yearlyRows.map((row) => (
+                        <div key={row.year} className="extra-info-table-row">
+                          <span>{row.year}</span>
+                          <span>
+                            {row.ridership ?? "—"}
+                            {row.delta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.delta, "%")}
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">周辺環境チェック</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.location?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.location)}`}
+                    >
+                      {additionalBreakdownByLabel.location?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.location?.score}/${additionalBreakdownByLabel.location?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.location?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.location.reason}</div>
+                  ) : null}
+                  <div className="extra-info-location-actions">
+                    <input
+                      type="text"
+                      className="field-input extra-info-location-address"
+                      placeholder="住所を入力（未入力なら解析済み住所を利用）"
+                      value={extraInfo.locationChecklist.address}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setExtraInfo((prev) => ({
+                          ...prev,
+                          locationChecklist: {
+                            ...prev.locationChecklist,
+                            address: value,
+                          },
+                        }));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="chip-button"
+                      onClick={handleFetchLocationChecklist}
+                      disabled={locationLookupLoading}
+                    >
+                      {locationLookupLoading ? "取得中..." : "住所から自動取得"}
+                    </button>
+                  </div>
+                  {locationLookupError ? (
+                    <div className="extra-info-location-error">{locationLookupError}</div>
+                  ) : null}
+                  {extraInfo.locationChecklist.auto ? (
+                    <div className="extra-info-summary">
+                      <div>
+                        <span>住所</span>
+                        <strong>{extraInfo.locationChecklist.auto.normalizedAddress ?? "—"}</strong>
+                      </div>
+                      <details className="extra-info-summary-details">
+                        <summary>
+                          <span>最寄り駅</span>
+                          <strong>
+                            {extraInfo.locationChecklist.auto.station?.name ?? "—"}
+                            {extraInfo.locationChecklist.auto.station?.line
+                              ? ` (${formatStationLine(extraInfo.locationChecklist.auto.station?.line)})`
+                              : ""}
+                            {" / "}
+                            {formatMinutes(extraInfo.locationChecklist.auto.station?.durationMinutes)} /{" "}
+                            {formatDistance(extraInfo.locationChecklist.auto.station?.distanceMeters)}
+                          </strong>
+                        </summary>
+                        <div className="extra-info-summary-detail-body">
+                          {renderLocationOptionList(
+                            "駅候補",
+                            extraInfo.locationChecklist.auto.stationOptions,
+                            true
+                          )}
+                        </div>
+                      </details>
+                      <details className="extra-info-summary-details">
+                        <summary>
+                          <span>最寄りバス停</span>
+                          <strong>
+                            {extraInfo.locationChecklist.auto.busStop?.name ?? "—"} /{" "}
+                            {formatMinutes(extraInfo.locationChecklist.auto.busStop?.durationMinutes)} /{" "}
+                            {formatDistance(extraInfo.locationChecklist.auto.busStop?.distanceMeters)}
+                          </strong>
+                        </summary>
+                        <div className="extra-info-summary-detail-body">
+                          {renderLocationOptionList(
+                            "バス停候補",
+                            extraInfo.locationChecklist.auto.busStopOptions
+                          )}
+                        </div>
+                      </details>
+                      <details className="extra-info-summary-details">
+                        <summary>
+                          <span>生活利便（徒歩）</span>
+                          <strong>
+                            コンビニ{" "}
+                            {formatMinutes(extraInfo.locationChecklist.auto.convenienceStore?.durationMinutes)}
+                            {" / "}
+                            スーパー{" "}
+                            {formatMinutes(extraInfo.locationChecklist.auto.supermarket?.durationMinutes)}
+                          </strong>
+                        </summary>
+                        <div className="extra-info-summary-detail-body">
+                          <div className="extra-info-summary-detail-item">
+                            <span>最寄りコンビニ</span>
+                            <strong>
+                              {extraInfo.locationChecklist.auto.convenienceStore?.name ?? "—"} /{" "}
+                              {formatMinutes(
+                                extraInfo.locationChecklist.auto.convenienceStore?.durationMinutes
+                              )}{" "}
+                              /{" "}
+                              {formatDistance(
+                                extraInfo.locationChecklist.auto.convenienceStore?.distanceMeters
+                              )}
+                            </strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>最寄りスーパー</span>
+                            <strong>
+                              {extraInfo.locationChecklist.auto.supermarket?.name ?? "—"} /{" "}
+                              {formatMinutes(
+                                extraInfo.locationChecklist.auto.supermarket?.durationMinutes
+                              )}{" "}
+                              /{" "}
+                              {formatDistance(
+                                extraInfo.locationChecklist.auto.supermarket?.distanceMeters
+                              )}
+                            </strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>最寄り病院</span>
+                            <strong>
+                              {extraInfo.locationChecklist.auto.hospital?.name ?? "—"} /{" "}
+                              {formatMinutes(extraInfo.locationChecklist.auto.hospital?.durationMinutes)} /{" "}
+                              {formatDistance(extraInfo.locationChecklist.auto.hospital?.distanceMeters)}
+                            </strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>最寄り薬局</span>
+                            <strong>
+                              {extraInfo.locationChecklist.auto.pharmacy?.name ?? "—"} /{" "}
+                              {formatMinutes(extraInfo.locationChecklist.auto.pharmacy?.durationMinutes)} /{" "}
+                              {formatDistance(extraInfo.locationChecklist.auto.pharmacy?.distanceMeters)}
+                            </strong>
+                          </div>
+                          {renderLocationOptionList(
+                            "コンビニ候補",
+                            extraInfo.locationChecklist.auto.convenienceOptions
+                          )}
+                          {renderLocationOptionList(
+                            "スーパー候補",
+                            extraInfo.locationChecklist.auto.supermarketOptions
+                          )}
+                        </div>
+                      </details>
+                      <details className="extra-info-summary-details">
+                        <summary>
+                          <span>施設数(800m)</span>
+                          <strong>
+                            コンビニ {extraInfo.locationChecklist.auto.convenienceCount800m ?? "—"} / スーパー{" "}
+                            {extraInfo.locationChecklist.auto.supermarketCount800m ?? "—"} / 病院{" "}
+                            {extraInfo.locationChecklist.auto.hospitalCount800m ?? "—"} / 薬局{" "}
+                            {extraInfo.locationChecklist.auto.pharmacyCount800m ?? "—"} / 学校{" "}
+                            {extraInfo.locationChecklist.auto.schoolCount800m ?? "—"} / 公園{" "}
+                            {extraInfo.locationChecklist.auto.parkCount800m ?? "—"}
+                          </strong>
+                        </summary>
+                        <div className="extra-info-summary-detail-body">
+                          <div className="extra-info-summary-detail-item">
+                            <span>コンビニ</span>
+                            <strong>{extraInfo.locationChecklist.auto.convenienceCount800m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>スーパー</span>
+                            <strong>{extraInfo.locationChecklist.auto.supermarketCount800m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>病院</span>
+                            <strong>{extraInfo.locationChecklist.auto.hospitalCount800m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>薬局</span>
+                            <strong>{extraInfo.locationChecklist.auto.pharmacyCount800m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>学校</span>
+                            <strong>{extraInfo.locationChecklist.auto.schoolCount800m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>公園</span>
+                            <strong>{extraInfo.locationChecklist.auto.parkCount800m ?? "—"}件</strong>
+                          </div>
+                        </div>
+                      </details>
+                      <details className="extra-info-summary-details">
+                        <summary>
+                          <span>嫌悪施設(1500m)</span>
+                          <strong>
+                            墓地 {extraInfo.locationChecklist.auto.cemeteryCount1500m ?? "—"} / ゴミ処理{" "}
+                            {extraInfo.locationChecklist.auto.wasteFacilityCount1500m ?? "—"} / 工場{" "}
+                            {extraInfo.locationChecklist.auto.factoryCount1500m ?? "—"}
+                          </strong>
+                        </summary>
+                        <div className="extra-info-summary-detail-body">
+                          <div className="extra-info-summary-detail-item">
+                            <span>墓地</span>
+                            <strong>{extraInfo.locationChecklist.auto.cemeteryCount1500m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>ゴミ処理施設</span>
+                            <strong>{extraInfo.locationChecklist.auto.wasteFacilityCount1500m ?? "—"}件</strong>
+                          </div>
+                          <div className="extra-info-summary-detail-item">
+                            <span>工場</span>
+                            <strong>{extraInfo.locationChecklist.auto.factoryCount1500m ?? "—"}件</strong>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  ) : null}
+                  <div className="extra-info-location-manual-list">
+                    {(Object.keys(LOCATION_MANUAL_LABELS) as Array<keyof LocationManualChecks>).map((key) => (
+                      <div key={key} className="extra-info-location-manual-item">
+                        <span>{LOCATION_MANUAL_LABELS[key]}</span>
+                        <select
+                          className={`field-select extra-info-location-select ${getManualLevelToneClass(
+                            extraInfo.locationChecklist.manual[key]
+                          )}`}
+                          value={extraInfo.locationChecklist.manual[key]}
+                          onChange={(event) =>
+                            updateLocationManual(key, event.target.value as LocationManualLevel)
+                          }
+                        >
+                          {LOCATION_MANUAL_LEVEL_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">空室率</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.vacancy?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.vacancy)}`}
+                    >
+                      {additionalBreakdownByLabel.vacancy?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.vacancy?.score}/${additionalBreakdownByLabel.vacancy?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.vacancy?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.vacancy.reason}</div>
+                  ) : null}
+                  <textarea
+                    className="extra-info-textarea"
+                    placeholder="空室率データをコピペ"
+                    value={extraInfo.vacancyText}
+                    onChange={(e) =>
+                      setExtraInfo((prev) => ({ ...prev, vacancyText: e.target.value }))
+                    }
+                  />
+                  {vacancySummary ? (
+                    <div className="extra-info-summary">
+                      <div>
+                        <span>空室率</span>
+                        <strong>
+                          {vacancySummary.rate ? `${vacancySummary.rate}%` : "—"}
+                          {vacancySummary.delta ? (
+                            <>
+                              {" "}
+                              {renderDelta(vacancySummary.delta, "pt")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>空家/借家</span>
+                        <strong>
+                          {vacancySummary.emptyUnits ?? "—"} / {vacancySummary.rentalUnits ?? "—"}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : null}
+                  {vacancySummary?.yearlyRows?.length ? (
+                    <div className="extra-info-table">
+                      <div className="extra-info-table-head">
+                        <span>西暦</span>
+                        <span>空室率</span>
+                        <span>空家/借家</span>
+                      </div>
+                      {vacancySummary.yearlyRows.map((row) => (
+                        <div key={row.year} className="extra-info-table-row">
+                          <span>{row.year}</span>
+                          <span>
+                            {row.rate ? `${row.rate}%` : "—"}
+                            {row.delta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.delta, "pt")}
+                              </>
+                            ) : null}
+                          </span>
+                          <span>
+                            {row.emptyUnits ?? "—"} / {row.rentalUnits ?? "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">ハザードマップ</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.hazard?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.hazard)}`}
+                    >
+                      {additionalBreakdownByLabel.hazard?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.hazard?.score}/${additionalBreakdownByLabel.hazard?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.hazard?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.hazard.reason}</div>
+                  ) : null}
+                  <div className="extra-info-hazard-list">
+                    {(["flood", "collapse", "debrisFlow", "landslide"] as HazardTypeKey[]).map((key) => {
+                      const selection = extraInfo.hazard[key];
+                      const options = key === "flood" ? FLOOD_SEVERITY_OPTIONS : SEDIMENT_SEVERITY_OPTIONS;
+                      return (
+                        <div key={key} className="extra-info-hazard-item">
+                          <label className="extra-info-hazard-check">
+                            <input
+                              type="checkbox"
+                              checked={selection.enabled}
+                              onChange={(event) => setHazardEnabled(key, event.target.checked)}
+                            />
+                            <span>{HAZARD_TYPE_LABELS[key]}</span>
+                          </label>
+                          <select
+                            className="field-select extra-info-hazard-select"
+                            value={selection.severity}
+                            onChange={(event) => setHazardSeverity(key, event.target.value)}
+                            disabled={!selection.enabled}
+                          >
+                            {options.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="extra-info-block">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">基準地価</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.landPrice?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.landPrice)}`}
+                    >
+                      {additionalBreakdownByLabel.landPrice?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.landPrice?.score}/${additionalBreakdownByLabel.landPrice?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.landPrice?.reason ? (
+                    <div className="extra-info-title-note">{additionalBreakdownByLabel.landPrice.reason}</div>
+                  ) : null}
+                  <textarea
+                    className="extra-info-textarea"
+                    placeholder="基準地価データをコピペ"
+                    value={extraInfo.landPriceText}
+                    onChange={(e) =>
+                      setExtraInfo((prev) => ({ ...prev, landPriceText: e.target.value }))
+                    }
+                  />
+                  {landPriceSummary ? (
+                    <div className="extra-info-summary">
+                      <div><span>所在地</span><strong>{landPriceSummary.address ?? "—"}</strong></div>
+                      <div>
+                        <span>公示地価</span>
+                        <strong>
+                          {landPriceSummary.official?.price ?? "—"}
+                          {landPriceSummary.official?.delta ? (
+                            <>
+                              {" "}
+                              {renderDelta(landPriceSummary.official.delta, "%")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>基準地価</span>
+                        <strong>
+                          {landPriceSummary.benchmark?.price ?? "—"}
+                          {landPriceSummary.benchmark?.delta ? (
+                            <>
+                              {" "}
+                              {renderDelta(landPriceSummary.benchmark.delta, "%")}
+                            </>
+                          ) : null}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>地積</span>
+                        <strong>{landPriceSummary.official?.area ?? landPriceSummary.benchmark?.area ?? "—"}</strong>
+                      </div>
+                      <div>
+                        <span>建ぺい/容積</span>
+                        <strong>
+                          {landPriceSummary.official?.ratio ?? landPriceSummary.benchmark?.ratio ?? "—"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>用途地域</span>
+                        <strong>
+                          {landPriceSummary.official?.zone ?? landPriceSummary.benchmark?.zone ?? "—"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>都市計画区分</span>
+                        <strong>
+                          {landPriceSummary.official?.planning ??
+                            landPriceSummary.benchmark?.planning ??
+                            "—"}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : null}
+                  {landPriceSummary?.yearlyRows?.length ? (
+                    <div className="extra-info-table">
+                      <div className="extra-info-table-head">
+                        <span>西暦</span>
+                        <span>公示地価</span>
+                        <span>基準地価</span>
+                      </div>
+                      {landPriceSummary.yearlyRows.map((row) => (
+                        <div key={row.year} className="extra-info-table-row">
+                          <span>{row.year}</span>
+                          <span>
+                            {row.official ?? "—"}
+                            {row.officialDelta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.officialDelta, "%")}
+                              </>
+                            ) : null}
+                          </span>
+                          <span>
+                            {row.benchmark ?? "—"}
+                            {row.benchmarkDelta ? (
+                              <>
+                                {" "}
+                                {renderDelta(row.benchmarkDelta, "%")}
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                  </div>
+                </div>
               </div>
             </div>
           </section>

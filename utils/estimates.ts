@@ -193,6 +193,10 @@ export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
       : input.buildingEvaluationRate,
     landTaxReductionRate: isMissingNumber(input.landTaxReductionRate) ? 16.67 : input.landTaxReductionRate,
     propertyTaxRate: isMissingNumber(input.propertyTaxRate) ? 1.7 : input.propertyTaxRate,
+    newBuildTaxReductionEnabled:
+      typeof input.newBuildTaxReductionEnabled === "boolean"
+        ? input.newBuildTaxReductionEnabled
+        : false,
     vacancyModel: input.vacancyModel ?? ("FIXED" as VacancyModelType),
     vacancyCycleYears: isMissingNumber(input.vacancyCycleYears) ? 4 : input.vacancyCycleYears,
     vacancyCycleMonths: isMissingNumber(input.vacancyCycleMonths) ? 3 : input.vacancyCycleMonths,

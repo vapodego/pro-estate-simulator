@@ -52,7 +52,7 @@ type ListingPreview = {
 };
 
 const GEMINI_MODEL = "gemini-3-flash-preview";
-const MAX_IMAGES = 6;
+const MAX_FILES = 6;
 
 const STRUCTURE_LABELS: Record<string, string> = {
   RC: "RC造",
@@ -85,13 +85,19 @@ export async function POST(request: Request) {
     }
 
     const formData = await request.formData();
-    const files = formData.getAll("images").filter((item) => item instanceof File) as File[];
+    const files = formData
+      .getAll("images")
+      .filter((item) => item instanceof File)
+      .filter((file) => {
+        const typed = file as File;
+        return typed.type.startsWith("image/") || typed.type.includes("pdf");
+      }) as File[];
     if (!files.length) {
-      return NextResponse.json({ error: "画像がありません。" }, { status: 400 });
+      return NextResponse.json({ error: "ファイルがありません。" }, { status: 400 });
     }
-    if (files.length > MAX_IMAGES) {
+    if (files.length > MAX_FILES) {
       return NextResponse.json(
-        { error: `画像は最大${MAX_IMAGES}枚までです。` },
+        { error: `ファイルは最大${MAX_FILES}件までです。` },
         { status: 400 }
       );
     }
@@ -100,7 +106,7 @@ export async function POST(request: Request) {
       {
         text: `
 あなたは不動産投資の入力フォーム用のデータ抽出AIです。
-以下のスクリーンショット画像から、指定のJSON形式だけを返してください。
+以下のスクリーンショット画像またはPDFから、指定のJSON形式だけを返してください。
 必ずJSONのみを返し、余計な文章は出力しないでください。
 
 【出力形式】

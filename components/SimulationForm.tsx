@@ -5,6 +5,7 @@ import {
   PropertyInput,
   StructureType,
   LEGAL_USEFUL_LIFE,
+  LoanCoverageMode,
   OerRateItem,
   OerFixedItem,
   OerEventItem,
@@ -76,10 +77,20 @@ const INPUT_HELP: Record<string, InputHelp> = {
     body:
       "説明：建築からの経過年数です。\n結果への影響：融資期間、修繕費、空室リスク、家賃下落の前提に影響します。\nコツ：新築は0年、築浅でも大規模修繕履歴があれば別途「修繕イベント」で反映できます。",
   },
+  grossYield: {
+    title: "表面利回り（%）",
+    body:
+      "説明：年間賃料 ÷ 物件価格で算出する指標です。\n結果への影響：収益性の初期目線を把握できます。\n算式：月額賃料 × 12 ÷ 物件価格 × 100",
+  },
   loanAmount: {
     title: "借入金額（万円）",
     body:
       "説明：ローンで借りる金額（元本）です。\n結果への影響：返済額とキャッシュフロー（CF）に直結します。\nコツ：「物件価格−頭金」だけでなく、諸費用を借りる場合はその分も加えます。",
+  },
+  loanCoverageMode: {
+    title: "融資対象モード",
+    body:
+      "説明：借入額をどの金額ベースで算出するかを選びます。\n結果への影響：「物件価格+初期費用」を選ぶと借入額が増え、返済額は増える一方で自己資金は小さくなります。\nコツ：金融機関の条件に合わせて切り替えて比較してください。",
   },
   equityRatio: {
     title: "自己資金（%）",
@@ -232,6 +243,11 @@ const INPUT_HELP: Record<string, InputHelp> = {
     title: "固定資産税・都市計画税率（%）",
     body:
       "説明：固定資産税と都市計画税を合算した実効税率です。\n結果への影響：毎年の固定費としてNOIを下げ、CFに影響します。\nコツ：物件所在地の税率・課税実績が分かる場合は実額に合わせるのが最も正確です。",
+  },
+  newBuildTaxReductionEnabled: {
+    title: "新築軽減措置（建物）",
+    body:
+      "説明：建物の固定資産税軽減を適用するかどうかを切り替えます。\n結果への影響：ONの期間中は建物分の課税標準を軽減し、固定資産税が下がります。\nコツ：専有面積条件などを満たす場合のみONにしてください。",
   },
   newBuildTaxReductionYears: {
     title: "新築軽減年数（年）",
@@ -514,6 +530,10 @@ export const SimulationForm: React.FC<Props> = ({
   const propertyTaxRate = Number.isFinite(formData.propertyTaxRate)
     ? formData.propertyTaxRate
     : initialData.propertyTaxRate ?? 1.7;
+  const newBuildTaxReductionEnabledValue =
+    typeof formData.newBuildTaxReductionEnabled === "boolean"
+      ? formData.newBuildTaxReductionEnabled
+      : initialData.newBuildTaxReductionEnabled ?? false;
   const newBuildTaxReductionYears = Number.isFinite(formData.newBuildTaxReductionYears)
     ? formData.newBuildTaxReductionYears
     : initialData.newBuildTaxReductionYears ?? 3;
@@ -629,6 +649,10 @@ export const SimulationForm: React.FC<Props> = ({
     : initialData.scenarioOccupancyDeclineDelta ?? 5;
   const buildingPrice = Math.round((formData.price * formData.buildingRatio) / 100);
   const landPrice = Math.max(0, formData.price - buildingPrice);
+  const loanCoverageModeValue: LoanCoverageMode =
+    formData.loanCoverageMode === "PRICE_AND_INITIAL"
+      ? "PRICE_AND_INITIAL"
+      : "PRICE_ONLY";
   const miscCost = Math.round((formData.price * miscCostRate) / 100);
   const waterContribution = Math.round((formData.price * waterContributionRate) / 100);
   const fireInsurance = Math.round((buildingPrice * fireInsuranceRate) / 100);
@@ -644,6 +668,8 @@ export const SimulationForm: React.FC<Props> = ({
   );
   const estimatedTotal = formData.price + initialCostsTotal;
   const annualFullRent = formData.monthlyRent * 12;
+  const grossYieldValue =
+    formData.price > 0 ? Number(((annualFullRent / formData.price) * 100).toFixed(2)) : 0;
   const oerBaseExact = getOerRateForAge(oerPropertyType, formData.buildingAge);
   const repairEvents = Array.isArray(formData.repairEvents)
     ? formData.repairEvents
@@ -655,6 +681,15 @@ export const SimulationForm: React.FC<Props> = ({
   const oerLeasingEnabledValue =
     typeof formData.oerLeasingEnabled === "boolean" ? formData.oerLeasingEnabled : true;
   const unitCountValue = Number.isFinite(formData.unitCount) ? formData.unitCount : 0;
+  const listingUnitCountRaw = listing?.unitCount ?? listing?.totalUnits;
+  const listingUnitCount = Number.isFinite(listingUnitCountRaw)
+    ? Math.max(0, Number(listingUnitCountRaw))
+    : 0;
+  const effectiveUnitCount = unitCountValue > 0 ? unitCountValue : listingUnitCount;
+  const avgMonthlyRentPerUnit =
+    formData.monthlyRent > 0 && effectiveUnitCount > 0
+      ? formData.monthlyRent / effectiveUnitCount
+      : null;
   const cleaningVisitsPerMonthValue =
     Number.isFinite(formData.cleaningVisitsPerMonth) && formData.cleaningVisitsPerMonth > 0
       ? formData.cleaningVisitsPerMonth
@@ -805,6 +840,10 @@ export const SimulationForm: React.FC<Props> = ({
     const taxRate = Number.isFinite(formData.propertyTaxRate)
       ? formData.propertyTaxRate
       : initialData.propertyTaxRate ?? 1.7;
+    const newBuildReductionEnabled =
+      typeof formData.newBuildTaxReductionEnabled === "boolean"
+        ? formData.newBuildTaxReductionEnabled
+        : initialData.newBuildTaxReductionEnabled ?? false;
     const newBuildReductionYears = Number.isFinite(formData.newBuildTaxReductionYears)
       ? formData.newBuildTaxReductionYears
       : initialData.newBuildTaxReductionYears ?? 3;
@@ -814,6 +853,11 @@ export const SimulationForm: React.FC<Props> = ({
     const incomeRate = Number.isFinite(formData.incomeTaxRate)
       ? formData.incomeTaxRate
       : initialData.incomeTaxRate ?? 20;
+    const loanCoverageMode: LoanCoverageMode =
+      formData.loanCoverageMode === "PRICE_AND_INITIAL" ||
+      formData.loanCoverageMode === "PRICE_ONLY"
+        ? formData.loanCoverageMode
+        : initialData.loanCoverageMode ?? "PRICE_ONLY";
     const vacancyMode = formData.vacancyModel ?? initialData.vacancyModel ?? "FIXED";
     const cycleYears = Number.isFinite(formData.vacancyCycleYears)
       ? formData.vacancyCycleYears
@@ -913,9 +957,11 @@ export const SimulationForm: React.FC<Props> = ({
       buildingRate === formData.buildingEvaluationRate &&
       landReduction === formData.landTaxReductionRate &&
       taxRate === formData.propertyTaxRate &&
+      newBuildReductionEnabled === formData.newBuildTaxReductionEnabled &&
       newBuildReductionYears === formData.newBuildTaxReductionYears &&
       newBuildReductionRate === formData.newBuildTaxReductionRate &&
       incomeRate === formData.incomeTaxRate &&
+      loanCoverageMode === formData.loanCoverageMode &&
       vacancyMode === formData.vacancyModel &&
       cycleYears === formData.vacancyCycleYears &&
       cycleMonths === formData.vacancyCycleMonths &&
@@ -967,9 +1013,11 @@ export const SimulationForm: React.FC<Props> = ({
       buildingEvaluationRate: buildingRate,
       landTaxReductionRate: landReduction,
       propertyTaxRate: taxRate,
+      newBuildTaxReductionEnabled: newBuildReductionEnabled,
       newBuildTaxReductionYears: newBuildReductionYears,
       newBuildTaxReductionRate: newBuildReductionRate,
       incomeTaxRate: incomeRate,
+      loanCoverageMode,
       vacancyModel: vacancyMode,
       vacancyCycleYears: cycleYears,
       vacancyCycleMonths: cycleMonths,
@@ -1011,14 +1059,49 @@ export const SimulationForm: React.FC<Props> = ({
     onCalculate(newData);
   };
 
-  const getLoanFromEquityRatio = (price: number, equityRatio: number) => {
+  const getLoanFromEquityRatio = (
+    price: number,
+    equityRatio: number,
+    loanCoverageMode: LoanCoverageMode = loanCoverageModeValue
+  ) => {
     const safePrice = Number.isFinite(price) ? price : 0;
-    const safeRatio = Number.isFinite(equityRatio) ? equityRatio : 0;
-    return Math.max(0, Math.round(safePrice * (1 - safeRatio / 100)));
+    const safeRatio = Number.isFinite(equityRatio) ? Math.max(0, Math.min(100, equityRatio)) : 0;
+    const financingRatio = 1 - safeRatio / 100;
+    if (financingRatio <= 0 || safePrice <= 0) return 0;
+    if (loanCoverageMode === "PRICE_ONLY") {
+      return Math.max(0, Math.round(safePrice * financingRatio));
+    }
+    const safeBuildingRatio = Number.isFinite(formData.buildingRatio)
+      ? Math.max(0, Math.min(100, formData.buildingRatio))
+      : 0;
+    const safeMiscRate = Number.isFinite(miscCostRate) ? Math.max(0, miscCostRate) : 0;
+    const safeWaterRate = Number.isFinite(waterContributionRate) ? Math.max(0, waterContributionRate) : 0;
+    const safeFireRate = Number.isFinite(fireInsuranceRate) ? Math.max(0, fireInsuranceRate) : 0;
+    const safeRegistrationRate = Number.isFinite(registrationCostRate)
+      ? Math.max(0, registrationCostRate)
+      : 0;
+    const safeLoanFeeRate = Number.isFinite(loanFeeRate) ? Math.max(0, loanFeeRate) : 0;
+    const buildingPrice = safePrice * (safeBuildingRatio / 100);
+    const fixedInitialCosts =
+      safePrice * (safeMiscRate / 100) +
+      safePrice * (safeWaterRate / 100) +
+      buildingPrice * (safeFireRate / 100) +
+      safePrice * (safeRegistrationRate / 100);
+    const feeRate = safeLoanFeeRate / 100;
+    const denominator = 1 - financingRatio * feeRate;
+    if (denominator <= 0) {
+      return Math.max(0, Math.round((safePrice + fixedInitialCosts) * financingRatio));
+    }
+    const loanAmount = ((safePrice + fixedInitialCosts) * financingRatio) / denominator;
+    return Math.max(0, Math.round(loanAmount));
   };
 
   const handlePriceChange = (value: number) => {
-    const nextLoanAmount = getLoanFromEquityRatio(value, formData.equityRatio);
+    const nextLoanAmount = getLoanFromEquityRatio(
+      value,
+      formData.equityRatio,
+      loanCoverageModeValue
+    );
     const next = { ...formData, price: value, loanAmount: nextLoanAmount };
     setFormData(next);
     setIsPristine(false);
@@ -1027,13 +1110,54 @@ export const SimulationForm: React.FC<Props> = ({
   };
 
   const handleEquityRatioChange = (value: number) => {
-    const nextLoanAmount = getLoanFromEquityRatio(formData.price, value);
+    const nextLoanAmount = getLoanFromEquityRatio(
+      formData.price,
+      value,
+      loanCoverageModeValue
+    );
     const next = { ...formData, equityRatio: value, loanAmount: nextLoanAmount };
     setFormData(next);
     setIsPristine(false);
     onFieldTouch?.("equityRatio");
     onCalculate(next);
   };
+
+  const handleLoanCoverageModeChange = (value: LoanCoverageMode) => {
+    const nextLoanAmount = getLoanFromEquityRatio(formData.price, formData.equityRatio, value);
+    const next = {
+      ...formData,
+      loanCoverageMode: value,
+      loanAmount: nextLoanAmount,
+    };
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.("loanCoverageMode");
+    onCalculate(next);
+  };
+
+  useEffect(() => {
+    const nextLoanAmount = getLoanFromEquityRatio(
+      formData.price,
+      formData.equityRatio,
+      loanCoverageModeValue
+    );
+    if (nextLoanAmount === formData.loanAmount) return;
+    const next = { ...formData, loanAmount: nextLoanAmount };
+    setFormData(next);
+    onCalculate(next);
+  }, [
+    formData.price,
+    formData.equityRatio,
+    formData.buildingRatio,
+    formData.loanAmount,
+    loanCoverageModeValue,
+    miscCostRate,
+    waterContributionRate,
+    fireInsuranceRate,
+    registrationCostRate,
+    loanFeeRate,
+    onCalculate,
+  ]);
 
   const applyAutoBuildingRatio = (nextData: PropertyInput) => {
     if (buildingRatioTouched) return nextData;
@@ -1476,6 +1600,30 @@ export const SimulationForm: React.FC<Props> = ({
                         />
                       </div>
                     </div>
+
+                    <div className="form-grid two-col oer-top-grid">
+                      <div>
+                        {renderHelpLabel("表面利回り (%)", "grossYield")}
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={displayPercent(grossYieldValue)}
+                          readOnly
+                        />
+                        <p className="form-note">価格・家賃に連動して自動更新</p>
+                      </div>
+                      <div>
+                        <label className="input-label">
+                          <span className="input-label-text">年間賃貸料 (万円)</span>
+                        </label>
+                        <input
+                          type="number"
+                          value={displayValue(annualFullRent, 10000)}
+                          readOnly
+                        />
+                        <p className="form-note">月額賃料 × 12</p>
+                      </div>
+                    </div>
                   </>
                 ) : null}
               </div>
@@ -1496,6 +1644,36 @@ export const SimulationForm: React.FC<Props> = ({
                   <>
                     <div className="form-grid one-col compact">
                       <div>
+                        {renderHelpLabel("融資対象モード", "loanCoverageMode")}
+                        <div className="form-grid two-col">
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="loanCoverageMode"
+                              value="PRICE_ONLY"
+                              checked={loanCoverageModeValue === "PRICE_ONLY"}
+                              onChange={() => handleLoanCoverageModeChange("PRICE_ONLY")}
+                            />
+                            <span>物件価格のみ</span>
+                          </label>
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="loanCoverageMode"
+                              value="PRICE_AND_INITIAL"
+                              checked={loanCoverageModeValue === "PRICE_AND_INITIAL"}
+                              onChange={() => handleLoanCoverageModeChange("PRICE_AND_INITIAL")}
+                            />
+                            <span>物件価格+初期費用</span>
+                          </label>
+                        </div>
+                        <p className="form-note">
+                          {loanCoverageModeValue === "PRICE_AND_INITIAL"
+                            ? "初期費用（融資手数料を含む概算）も借入対象に含めて計算"
+                            : "借入対象は物件価格のみで計算"}
+                        </p>
+                      </div>
+                      <div>
                         {renderLabel("自己資金 (%)", "equityRatio")}
                         <input
                           type="number"
@@ -1515,6 +1693,12 @@ export const SimulationForm: React.FC<Props> = ({
                           className={isAutoFilled("loanAmount") ? "auto-input" : undefined}
                           readOnly
                         />
+                        <p className="form-note">
+                          算出基準:{" "}
+                          {loanCoverageModeValue === "PRICE_AND_INITIAL"
+                            ? "物件価格+初期費用"
+                            : "物件価格のみ"}
+                        </p>
                       </div>
                       <div>
                         {renderLabel("金利 (%)", "interestRate")}
@@ -1549,9 +1733,20 @@ export const SimulationForm: React.FC<Props> = ({
                           }
                         />
                         {!isPristine && formData.monthlyRent > 0 ? (
-                          <p className="form-note">
-                            年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
-                          </p>
+                          <>
+                            <p className="form-note">
+                              年間賃貸料: {(annualFullRent / 10000).toLocaleString()} 万円
+                            </p>
+                            <p className="form-note">
+                              1部屋あたり平均賃料:{" "}
+                              {avgMonthlyRentPerUnit !== null
+                                ? `${(avgMonthlyRentPerUnit / 10000).toLocaleString(undefined, {
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 2,
+                                  })} 万円/月（${Math.round(effectiveUnitCount)}戸）`
+                                : "戸数が未設定のため算出不可"}
+                            </p>
+                          </>
                         ) : null}
                       </div>
                       <div>
@@ -2569,6 +2764,24 @@ export const SimulationForm: React.FC<Props> = ({
                         onChange={(e) => handleChange("propertyTaxRate", Number(e.target.value))}
                       />
                     </div>
+                    <div className="form-grid-span-2">
+                      <div className="inline-toggle form-split-row">
+                        {renderHelpLabel("新築軽減措置（建物）", "newBuildTaxReductionEnabled")}
+                        <div className="inline-toggle">
+                          <input
+                            type="checkbox"
+                            id="newBuildTaxReductionEnabled"
+                            checked={newBuildTaxReductionEnabledValue}
+                            onChange={(e) =>
+                              handleChange("newBuildTaxReductionEnabled", e.target.checked)
+                            }
+                          />
+                          <label htmlFor="newBuildTaxReductionEnabled" className="inline-label">
+                            有効にする
+                          </label>
+                        </div>
+                      </div>
+                    </div>
                     <div>
                       {renderLabel("新築軽減年数 (年)", "newBuildTaxReductionYears")}
                       <input
@@ -2578,6 +2791,7 @@ export const SimulationForm: React.FC<Props> = ({
                         className={
                           isAutoFilled("newBuildTaxReductionYears") ? "auto-input" : undefined
                         }
+                        disabled={!newBuildTaxReductionEnabledValue}
                         onChange={(e) =>
                           handleChange("newBuildTaxReductionYears", Number(e.target.value))
                         }
@@ -2593,6 +2807,7 @@ export const SimulationForm: React.FC<Props> = ({
                         className={
                           isAutoFilled("newBuildTaxReductionRate") ? "auto-input" : undefined
                         }
+                        disabled={!newBuildTaxReductionEnabledValue}
                         onChange={(e) =>
                           handleChange("newBuildTaxReductionRate", Number(e.target.value))
                         }
