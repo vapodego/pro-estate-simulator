@@ -59,8 +59,16 @@ type ImportResponse = {
     infoRegisteredDate: string | null;
     notes: string | null;
     imageUrl: string | null;
+    layoutDetails?: ListingLayoutDetail[] | null;
   };
   warnings?: string[];
+};
+
+export type ListingLayoutDetail = {
+  layout: string;
+  floor: string;
+  monthlyRentYen: number | null;
+  areaSqm: number | null;
 };
 
 export type ListingPreview = NonNullable<ImportResponse["listing"]>;
@@ -126,6 +134,24 @@ const toNumber = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const buildApiErrorMessage = async (response: Response, fallback: string) => {
+  const responseText = await response.text();
+  let payload: { error?: unknown; details?: unknown } = {};
+  try {
+    payload = JSON.parse(responseText) as { error?: unknown; details?: unknown };
+  } catch {
+    payload = {};
+  }
+  const message = typeof payload.error === "string" ? payload.error : fallback;
+  const detailFromPayload = typeof payload.details === "string" ? payload.details : null;
+  const detailFromText =
+    !detailFromPayload && responseText.trim()
+      ? `${responseText.trim().slice(0, 180)}${responseText.trim().length > 180 ? "..." : ""}`
+      : null;
+  const detail = detailFromPayload ?? detailFromText;
+  return `${message} [HTTP ${response.status}]${detail ? ` (${detail})` : ""}`;
+};
+
 
 const normalizeFields = (fields: Record<string, ImportField>) => {
   const next = { ...fields };
@@ -171,7 +197,12 @@ const normalizeFields = (fields: Record<string, ImportField>) => {
 
 type Props = {
   currentInput: PropertyInput;
-  onApply: (payload: { patch: Partial<PropertyInput>; listing: ListingPreview | null; url: string }) => void;
+  onApply: (payload: {
+    patch: Partial<PropertyInput>;
+    listing: ListingPreview | null;
+    url: string;
+    cacheEnabled: boolean;
+  }) => void;
   history?: ImportHistoryItem[];
   selectedHistoryId?: string | null;
   onSelectHistory?: (id: string) => void;
@@ -198,6 +229,7 @@ export const RakumachiImporter = ({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [cacheHit, setCacheHit] = useState(false);
+  const [useCache, setUseCache] = useState(true);
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<
     { id: string; url: string; name: string; type: string }[]
@@ -337,12 +369,17 @@ export const RakumachiImporter = ({
     setCollapsed({ extracted: false, manual: false });
     setShowDetails(false);
     try {
-      if (onCacheLookup) {
+      if (useCache && onCacheLookup) {
         const cached = await onCacheLookup(url.trim());
         if (cached) {
           setResult({ fields: {}, listing: cached.listing ?? undefined, warnings: ["cache"] });
           setCacheHit(true);
-          onApply({ patch: cached.input, listing: cached.listing ?? null, url: url.trim() });
+          onApply({
+            patch: cached.input,
+            listing: cached.listing ?? null,
+            url: url.trim(),
+            cacheEnabled: useCache,
+          });
           return;
         }
       }
@@ -352,9 +389,7 @@ export const RakumachiImporter = ({
         body: JSON.stringify({ url: url.trim() }),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        const details = body?.details ? ` (${body.details})` : "";
-        throw new Error(`${body?.error ?? "解析に失敗しました。"}${details}`);
+        throw new Error(await buildApiErrorMessage(response, "解析に失敗しました。"));
       }
       const data = (await response.json()) as ImportResponse;
       const normalized = normalizeFields(data.fields ?? {});
@@ -421,7 +456,12 @@ export const RakumachiImporter = ({
       setCollapsed({ extracted: true, manual: true });
       setShowDetails(false);
       if (Object.keys(patch).length > 0) {
-        onApply({ patch, listing: data.listing ?? null, url: url.trim() });
+        onApply({
+          patch,
+          listing: data.listing ?? null,
+          url: url.trim(),
+          cacheEnabled: useCache,
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "解析に失敗しました。");
@@ -445,12 +485,17 @@ export const RakumachiImporter = ({
     setShowDetails(false);
     try {
       const cacheKey = await buildImageCacheKey(imageFiles);
-      if (onCacheLookup) {
+      if (useCache && onCacheLookup) {
         const cached = await onCacheLookup(cacheKey);
         if (cached) {
           setResult({ fields: {}, listing: cached.listing ?? undefined, warnings: ["cache"] });
           setCacheHit(true);
-          onApply({ patch: cached.input, listing: cached.listing ?? null, url: cacheKey });
+          onApply({
+            patch: cached.input,
+            listing: cached.listing ?? null,
+            url: cacheKey,
+            cacheEnabled: useCache,
+          });
           setImageFiles([]);
           return;
         }
@@ -465,9 +510,7 @@ export const RakumachiImporter = ({
         body: formData,
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        const details = body?.details ? ` (${body.details})` : "";
-        throw new Error(`${body?.error ?? "解析に失敗しました。"}${details}`);
+        throw new Error(await buildApiErrorMessage(response, "解析に失敗しました。"));
       }
       const data = (await response.json()) as ImportResponse;
       const normalized = normalizeFields(data.fields ?? {});
@@ -534,7 +577,12 @@ export const RakumachiImporter = ({
       setCollapsed({ extracted: true, manual: true });
       setShowDetails(false);
       if (Object.keys(patch).length > 0) {
-        onApply({ patch, listing: data.listing ?? null, url: cacheKey });
+        onApply({
+          patch,
+          listing: data.listing ?? null,
+          url: cacheKey,
+          cacheEnabled: useCache,
+        });
       }
       setImageFiles([]);
     } catch (err) {
@@ -665,6 +713,15 @@ export const RakumachiImporter = ({
             画像/PDFを選択
           </button>
         </div>
+        <label className="inline-label">
+          <input
+            type="checkbox"
+            checked={useCache}
+            onChange={(event) => setUseCache(event.target.checked)}
+            disabled={loading}
+          />
+          <span>キャッシュを利用する</span>
+        </label>
         {imageFiles.length > 0 ? (
           <div className="form-note">ファイル {imageFiles.length}件を解析します。</div>
         ) : null}
@@ -725,7 +782,13 @@ export const RakumachiImporter = ({
         ) : null}
         {error ? <div className="auth-error">{error}</div> : null}
         {cacheHit ? <div className="form-note">キャッシュから復元しました。</div> : null}
-        {!cacheHit && result ? <div className="form-note">解析結果を自動で反映しました。</div> : null}
+        {!cacheHit && result ? (
+          <div className="form-note">
+            {useCache
+              ? "解析結果を自動で反映しました。"
+              : "キャッシュ無効モードで再解析結果を反映しました。"}
+          </div>
+        ) : null}
       </div>
     </div>
   );

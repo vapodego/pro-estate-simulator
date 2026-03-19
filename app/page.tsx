@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type Dispatch,
   type FormEvent,
   type ReactNode,
@@ -29,7 +30,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { SimulationForm } from "../components/SimulationForm";
 import { SimulationChart } from "../components/SimulationChart";
-import { RakumachiImporter, ImportHistoryItem } from "../components/RakumachiImporter";
+import {
+  RakumachiImporter,
+  ImportHistoryItem,
+  type ListingLayoutDetail,
+} from "../components/RakumachiImporter";
 import { ListingSummary } from "../components/ListingSummary";
 import { calculateNPV, calculateIRR } from "../utils/finance";
 import { calculateSimulation, calculatePMT, calculateUsefulLife } from "../utils/simulation";
@@ -58,14 +63,14 @@ import {
   where,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "../utils/firebase";
-import { Building2, Calculator, History, Save, UserCircle } from "lucide-react";
+import { Building2, Calculator, Download, FileText, History, Save, UserCircle } from "lucide-react";
 import { applyEstimatedDefaultsWithMeta } from "../utils/estimates";
 
 // デフォルトの初期値（空の状態）
 const DEFAULT_INPUT: PropertyInput = {
   price: 0,
   buildingRatio: 0,
-  miscCostRate: 0,
+  miscCostRate: 3,
   landEvaluationRate: 0,
   buildingEvaluationRate: 0,
   landTaxReductionRate: 0,
@@ -80,17 +85,17 @@ const DEFAULT_INPUT: PropertyInput = {
   equipmentUsefulLife: 0,
   waterContributionRate: 0,
   fireInsuranceRate: 0,
-  loanFeeRate: 0,
+  loanFeeRate: 3.3,
   registrationCostRate: 0,
   acquisitionTaxRate: 0,
   acquisitionLandReductionRate: 0,
-  loanCoverageMode: "PRICE_ONLY",
-  equityRatio: 0,
+  loanCoverageMode: "PRICE_AND_INITIAL",
+  equityRatio: 10,
   loanAmount: 0,
-  interestRate: 0,
+  interestRate: 1.7,
   loanDuration: 0,
   monthlyRent: 0,
-  occupancyRate: 0,
+  occupancyRate: 99,
   occupancyDetailEnabled: false,
   occupancyRateYear1to2: 0,
   occupancyRateYear3to10: 0,
@@ -148,6 +153,37 @@ type PortySigmaKey = "minus1Sigma" | "baseSigma" | "plus1Sigma";
 type PortyFloorKey = "floor1" | "floor2" | "floor3";
 type PortyRentRow = Record<PortySigmaKey, number | null>;
 type PortyRentByFloor = Record<PortyFloorKey, PortyRentRow>;
+type LifullDemandRow = {
+  bucket: string;
+  searchPct: number | null;
+  listingPct: number | null;
+};
+type LifullDemandInput = {
+  heatmapLevel: number | null;
+  heatmapLabel: string;
+  sourceArea: string;
+  analyzedAt: string | null;
+  rentRows: LifullDemandRow[];
+  ageRows: LifullDemandRow[];
+  areaRows: LifullDemandRow[];
+  layoutRows: LifullDemandRow[];
+  stationWalkRows: LifullDemandRow[];
+};
+type LifullDemandAnalyzeResponse = {
+  data?: {
+    heatmapLevel: number | null;
+    heatmapLabel: string | null;
+    sourceArea: string | null;
+    rentRows: LifullDemandRow[];
+    ageRows: LifullDemandRow[];
+    areaRows: LifullDemandRow[];
+    layoutRows: LifullDemandRow[];
+    stationWalkRows: LifullDemandRow[];
+  };
+  warnings?: string[];
+  error?: string;
+  details?: string;
+};
 
 type InvestmentInput = {
   demandTrend: InvestmentDemandTrend;
@@ -189,6 +225,7 @@ type ExtraInfoInput = {
   purchaseChecklist: PurchaseChecklistMap;
   comparableText: string;
   portyRentByFloor: PortyRentByFloor;
+  lifullDemand: LifullDemandInput;
   populationText: string;
   ridershipText: string;
   vacancyText: string;
@@ -246,7 +283,7 @@ type LocationChecklistInput = {
   manual: LocationManualChecks;
 };
 
-type HazardTypeKey = "flood" | "collapse" | "debrisFlow" | "landslide";
+type HazardTypeKey = "flood" | "inlandFlood" | "collapse" | "debrisFlow" | "landslide";
 
 type HazardSelection = {
   enabled: boolean;
@@ -266,6 +303,17 @@ const FLOOD_SEVERITY_OPTIONS = [
   { value: "0m_0_3m", label: "〜0.3m", penalty: 1 },
 ] as const;
 
+const INLAND_FLOOD_SEVERITY_OPTIONS = [
+  { value: "20m_over", label: "20m〜", penalty: 8 },
+  { value: "10m_20m", label: "10m〜20m", penalty: 6 },
+  { value: "5m_10m", label: "5m〜10m", penalty: 5 },
+  { value: "3m_5m", label: "3m〜5m", penalty: 4 },
+  { value: "0_5m_3m", label: "0.5m〜3m", penalty: 3 },
+  { value: "0_5m_1m", label: "0.5m〜1m", penalty: 2 },
+  { value: "0m_0_5m", label: "〜0.5m", penalty: 1 },
+  { value: "0m_0_3m", label: "〜0.3m", penalty: 1 },
+] as const;
+
 const SEDIMENT_SEVERITY_OPTIONS = [
   { value: "special", label: "特別警戒区域", penalty: 8 },
   { value: "warning", label: "警戒区域", penalty: 4 },
@@ -273,6 +321,7 @@ const SEDIMENT_SEVERITY_OPTIONS = [
 
 const HAZARD_TYPE_LABELS: Record<HazardTypeKey, string> = {
   flood: "洪水",
+  inlandFlood: "内水",
   collapse: "土砂（崩壊）",
   debrisFlow: "土砂（土石流）",
   landslide: "土砂（地すべり）",
@@ -280,6 +329,7 @@ const HAZARD_TYPE_LABELS: Record<HazardTypeKey, string> = {
 
 const DEFAULT_HAZARD_INPUT: HazardInput = {
   flood: { enabled: false, severity: FLOOD_SEVERITY_OPTIONS[0].value },
+  inlandFlood: { enabled: false, severity: INLAND_FLOOD_SEVERITY_OPTIONS[0].value },
   collapse: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
   debrisFlow: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
   landslide: { enabled: false, severity: SEDIMENT_SEVERITY_OPTIONS[0].value },
@@ -483,9 +533,35 @@ const clonePortyRentByFloor = (source?: PortyRentByFloor): PortyRentByFloor => (
 
 const cloneHazardInput = (source: HazardInput = DEFAULT_HAZARD_INPUT): HazardInput => ({
   flood: { ...source.flood },
+  inlandFlood: { ...source.inlandFlood },
   collapse: { ...source.collapse },
   debrisFlow: { ...source.debrisFlow },
   landslide: { ...source.landslide },
+});
+
+const LIFULL_HEATMAP_LEVEL_OPTIONS: Array<{ value: number; label: string; color: string }> = [
+  { value: 10, label: "10（閲覧最多）", color: "#f87171" },
+  { value: 9, label: "9", color: "#fb923c" },
+  { value: 8, label: "8", color: "#facc15" },
+  { value: 7, label: "7", color: "#a3e635" },
+  { value: 6, label: "6", color: "#4ade80" },
+  { value: 5, label: "5", color: "#2dd4bf" },
+  { value: 4, label: "4", color: "#22d3ee" },
+  { value: 3, label: "3", color: "#60a5fa" },
+  { value: 2, label: "2", color: "#818cf8" },
+  { value: 1, label: "1（閲覧少）", color: "#a855f7" },
+];
+
+const createDefaultLifullDemand = (): LifullDemandInput => ({
+  heatmapLevel: null,
+  heatmapLabel: "",
+  sourceArea: "",
+  analyzedAt: null,
+  rentRows: [],
+  ageRows: [],
+  areaRows: [],
+  layoutRows: [],
+  stationWalkRows: [],
 });
 
 const createDefaultExtraInfo = (): ExtraInfoInput => ({
@@ -493,6 +569,7 @@ const createDefaultExtraInfo = (): ExtraInfoInput => ({
   purchaseChecklist: createDefaultPurchaseChecklist(),
   comparableText: "",
   portyRentByFloor: createDefaultPortyRentByFloor(),
+  lifullDemand: createDefaultLifullDemand(),
   populationText: "",
   ridershipText: "",
   vacancyText: "",
@@ -578,6 +655,10 @@ const normalizeExtraInfo = (value: unknown): ExtraInfoInput => {
     source.portyRentByFloor && typeof source.portyRentByFloor === "object"
       ? (source.portyRentByFloor as Partial<Record<PortyFloorKey, unknown>>)
       : {};
+  const rawLifullDemand =
+    source.lifullDemand && typeof source.lifullDemand === "object"
+      ? (source.lifullDemand as Partial<Record<keyof LifullDemandInput, unknown>>)
+      : {};
   const normalizeRentValue = (value: unknown): number | null => {
     if (typeof value === "number") {
       return Number.isFinite(value) ? value : null;
@@ -598,6 +679,26 @@ const normalizeExtraInfo = (value: unknown): ExtraInfoInput => {
       baseSigma: normalizeRentValue(row.baseSigma),
       plus1Sigma: normalizeRentValue(row.plus1Sigma),
     };
+  };
+  const normalizePercent = (value: unknown): number | null => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return value;
+  };
+  const normalizeLifullRows = (value: unknown): LifullDemandRow[] => {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const item = row as Partial<Record<keyof LifullDemandRow, unknown>>;
+        const bucket = typeof item.bucket === "string" ? item.bucket.trim() : "";
+        if (!bucket) return null;
+        return {
+          bucket,
+          searchPct: normalizePercent(item.searchPct),
+          listingPct: normalizePercent(item.listingPct),
+        };
+      })
+      .filter((row): row is LifullDemandRow => row !== null);
   };
   const normalizeHazardItem = (
     key: HazardTypeKey,
@@ -622,12 +723,30 @@ const normalizeExtraInfo = (value: unknown): ExtraInfoInput => {
       floor2: normalizePortyRow(rawPortyRentByFloor.floor2),
       floor3: normalizePortyRow(rawPortyRentByFloor.floor3),
     }),
+    lifullDemand: {
+      heatmapLevel:
+        typeof rawLifullDemand.heatmapLevel === "number" &&
+        Number.isFinite(rawLifullDemand.heatmapLevel) &&
+        rawLifullDemand.heatmapLevel >= 1 &&
+        rawLifullDemand.heatmapLevel <= 10
+          ? Math.round(rawLifullDemand.heatmapLevel)
+          : null,
+      heatmapLabel: typeof rawLifullDemand.heatmapLabel === "string" ? rawLifullDemand.heatmapLabel : "",
+      sourceArea: typeof rawLifullDemand.sourceArea === "string" ? rawLifullDemand.sourceArea : "",
+      analyzedAt: typeof rawLifullDemand.analyzedAt === "string" ? rawLifullDemand.analyzedAt : null,
+      rentRows: normalizeLifullRows(rawLifullDemand.rentRows),
+      ageRows: normalizeLifullRows(rawLifullDemand.ageRows),
+      areaRows: normalizeLifullRows(rawLifullDemand.areaRows),
+      layoutRows: normalizeLifullRows(rawLifullDemand.layoutRows),
+      stationWalkRows: normalizeLifullRows(rawLifullDemand.stationWalkRows),
+    },
     populationText: typeof source.populationText === "string" ? source.populationText : "",
     ridershipText: typeof source.ridershipText === "string" ? source.ridershipText : "",
     vacancyText: typeof source.vacancyText === "string" ? source.vacancyText : "",
     landPriceText: typeof source.landPriceText === "string" ? source.landPriceText : "",
     hazard: {
       flood: normalizeHazardItem("flood", FLOOD_SEVERITY_OPTIONS[0].value),
+      inlandFlood: normalizeHazardItem("inlandFlood", INLAND_FLOOD_SEVERITY_OPTIONS[0].value),
       collapse: normalizeHazardItem("collapse", SEDIMENT_SEVERITY_OPTIONS[0].value),
       debrisFlow: normalizeHazardItem("debrisFlow", SEDIMENT_SEVERITY_OPTIONS[0].value),
       landslide: normalizeHazardItem("landslide", SEDIMENT_SEVERITY_OPTIONS[0].value),
@@ -689,7 +808,6 @@ const DEFAULT_LEFT_ORDER = [
 ];
 const DEFAULT_RIGHT_ORDER = [
   "kpi",
-  "investmentScore",
   "charts",
   "cashflow",
   "simulation",
@@ -1129,6 +1247,10 @@ export default function Home() {
   const [investmentEditOpen, setInvestmentEditOpen] = useState(false);
   const [extraInfo, setExtraInfo] = useState<ExtraInfoInput>(createDefaultExtraInfo);
   const [showCompletedChecklist, setShowCompletedChecklist] = useState(false);
+  const [lifullDemandFiles, setLifullDemandFiles] = useState<File[]>([]);
+  const [lifullDemandLoading, setLifullDemandLoading] = useState(false);
+  const [lifullDemandError, setLifullDemandError] = useState<string | null>(null);
+  const [lifullDemandNotice, setLifullDemandNotice] = useState<string | null>(null);
   const [locationLookupLoading, setLocationLookupLoading] = useState(false);
   const [locationLookupError, setLocationLookupError] = useState<string | null>(null);
   const [areaStatsLookupLoading, setAreaStatsLookupLoading] = useState(false);
@@ -1228,6 +1350,256 @@ export default function Home() {
   const formatStationLine = (line: string | null | undefined) => {
     if (!line) return "";
     return line.replace("（Google分類）", "").trim();
+  };
+
+  const formatLifullPercent = (value: number | null | undefined) =>
+    typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
+
+  const normalizeBucketLabel = (value: string) =>
+    value
+      .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+      .replace(/[～〜]/g, "~")
+      .replace(/\s+/g, "")
+      .trim();
+
+  const findIndexByNumericBucket = (
+    rows: LifullDemandRow[],
+    value: number | null,
+    kind: "rent" | "area" | "age" | "walk"
+  ) => {
+    if (value === null || !Number.isFinite(value)) return -1;
+
+    const parsed = rows.map((row) => {
+      const bucket = normalizeBucketLabel(row.bucket);
+      const numbers = Array.from(bucket.matchAll(/\d+(?:\.\d+)?/g)).map((match) => Number(match[0]));
+      return {
+        bucket,
+        numbers,
+        startsWithTilde: bucket.startsWith("~"),
+        endsWithTilde: bucket.endsWith("~"),
+        hasAbove: bucket.includes("以上"),
+        hasBelow: bucket.includes("以下"),
+      };
+    });
+
+    const matchBucket = (index: number) => {
+      const current = parsed[index];
+      if (!current || !current.bucket) return false;
+
+      if (kind === "age" && current.bucket.includes("新築")) {
+        return value >= 0 && value < 1;
+      }
+      if (current.numbers.length === 0) return false;
+
+      if (current.numbers.length >= 2) {
+        const min = current.numbers[0];
+        const max = current.numbers[1];
+        return value >= min && value <= max;
+      }
+
+      const single = current.numbers[0];
+      if (current.startsWithTilde || current.hasBelow) {
+        return value < single;
+      }
+      if (current.hasAbove) {
+        return value >= single;
+      }
+      if (current.endsWithTilde) {
+        const nextStarts = parsed
+          .slice(index + 1)
+          .map((item) => (item.numbers.length > 0 ? item.numbers[0] : null))
+          .filter((num): num is number => typeof num === "number" && Number.isFinite(num) && num > single);
+        const upper = nextStarts.length > 0 ? nextStarts[0] : Number.POSITIVE_INFINITY;
+        return value >= single && value < upper;
+      }
+
+      return value === single;
+    };
+
+    return rows.findIndex((_, index) => matchBucket(index));
+  };
+
+  const extractWalkMinutes = (access: string | null | undefined): number | null => {
+    if (!access) return null;
+    const normalized = access.replace(/[０-９]/g, (char) =>
+      String.fromCharCode(char.charCodeAt(0) - 0xfee0)
+    );
+    const values = Array.from(normalized.matchAll(/徒歩\s*([0-9]{1,2})\s*分/g))
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    if (!values.length) return null;
+    return Math.min(...values);
+  };
+
+  const normalizeLayout = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    const normalized = value
+      .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+      .toUpperCase();
+    const compact = normalized.replace(/\s+/g, "");
+    if (compact.includes("ワンルーム")) return "1R";
+    const match = compact.match(/([1-9][0-9]?S?LDK|[1-9][0-9]?SDK|[1-9][0-9]?LDK|[1-9][0-9]?DK|[1-9][0-9]?K|[1-9][0-9]?R)/);
+    return match ? match[1] : null;
+  };
+
+  const findIndexByLayoutBucket = (rows: LifullDemandRow[], layoutRaw: string | null) => {
+    if (!layoutRaw) return -1;
+    const layout = normalizeLayout(layoutRaw);
+    if (!layout) return -1;
+    return rows.findIndex((row) => {
+      const bucket = normalizeBucketLabel(row.bucket).toUpperCase();
+      if (!bucket) return false;
+      if (layout === "1R" && (bucket.includes("1R") || bucket.includes("ワンルーム"))) return true;
+      if (bucket.includes(layout)) return true;
+      if (layout.includes("S")) {
+        const noSLayout = layout.replace("S", "");
+        if (noSLayout && bucket.includes(noSLayout)) return true;
+      }
+      return false;
+    });
+  };
+
+  const selectMedian = (values: number[]): number | null => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const center = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 1) return sorted[center];
+    return (sorted[center - 1] + sorted[center]) / 2;
+  };
+
+  const selectMostFrequentLayout = (layouts: string[]): string | null => {
+    if (!layouts.length) return null;
+    const countMap = new Map<string, number>();
+    layouts.forEach((layout) => {
+      countMap.set(layout, (countMap.get(layout) ?? 0) + 1);
+    });
+    let best: string | null = null;
+    let bestCount = -1;
+    countMap.forEach((count, layout) => {
+      if (count > bestCount) {
+        best = layout;
+        bestCount = count;
+      }
+    });
+    return best;
+  };
+
+  const lifullSelectedListing = useMemo(
+    () => importHistory.find((item) => item.id === selectedImportId)?.listing ?? null,
+    [importHistory, selectedImportId]
+  );
+
+  const lifullRowFocusIndexes = useMemo(() => {
+    const listing = lifullSelectedListing;
+    const detailRows = Array.isArray(listing?.layoutDetails) ? listing.layoutDetails : [];
+    const detailLayouts = detailRows
+      .map((row) => normalizeLayout(row.layout))
+      .filter((value): value is string => Boolean(value));
+    const detailRentManYen = detailRows
+      .map((row) => row.monthlyRentYen)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+      .map((value) => value / 10000);
+    const detailAreas = detailRows
+      .map((row) => row.areaSqm)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+
+    const listingUnitsRaw = listing?.unitCount ?? listing?.totalUnits ?? null;
+    const listingUnits =
+      typeof listingUnitsRaw === "number" && Number.isFinite(listingUnitsRaw) && listingUnitsRaw > 0
+        ? listingUnitsRaw
+        : null;
+    const effectiveUnits =
+      listingUnits && listingUnits > 0
+        ? listingUnits
+        : inputData.unitCount > 0
+          ? inputData.unitCount
+          : null;
+
+    const baseMonthlyRentYen =
+      typeof listing?.monthlyRentYen === "number" && Number.isFinite(listing.monthlyRentYen) && listing.monthlyRentYen > 0
+        ? listing.monthlyRentYen
+        : inputData.monthlyRent > 0
+          ? inputData.monthlyRent
+          : null;
+
+    const unitRentYen =
+      baseMonthlyRentYen !== null && effectiveUnits && effectiveUnits > 0
+        ? baseMonthlyRentYen / effectiveUnits
+        : null;
+    const unitRentManYen =
+      selectMedian(detailRentManYen) ?? (unitRentYen !== null ? unitRentYen / 10000 : null);
+
+    const avgAreaSqm =
+      selectMedian(detailAreas) ??
+      (listing?.floorAreaSqm && effectiveUnits && effectiveUnits > 0
+        ? listing.floorAreaSqm / effectiveUnits
+        : null);
+
+    const buildingAgeYears =
+      listing?.buildingAgeYears ??
+      (Number.isFinite(inputData.buildingAge) && inputData.buildingAge > 0
+        ? inputData.buildingAge
+        : null);
+
+    const walkMinutes = extractWalkMinutes(listing?.access);
+    const layout = selectMostFrequentLayout(detailLayouts) ?? listing?.layout ?? null;
+
+    return {
+      layout: findIndexByLayoutBucket(extraInfo.lifullDemand.layoutRows, layout),
+      rent: findIndexByNumericBucket(extraInfo.lifullDemand.rentRows, unitRentManYen, "rent"),
+      area: findIndexByNumericBucket(extraInfo.lifullDemand.areaRows, avgAreaSqm, "area"),
+      age: findIndexByNumericBucket(extraInfo.lifullDemand.ageRows, buildingAgeYears, "age"),
+      walk: findIndexByNumericBucket(extraInfo.lifullDemand.stationWalkRows, walkMinutes, "walk"),
+    };
+  }, [
+    extraInfo.lifullDemand.ageRows,
+    extraInfo.lifullDemand.areaRows,
+    extraInfo.lifullDemand.layoutRows,
+    extraInfo.lifullDemand.rentRows,
+    extraInfo.lifullDemand.stationWalkRows,
+    lifullSelectedListing,
+    inputData.buildingAge,
+    inputData.monthlyRent,
+    inputData.unitCount,
+  ]);
+
+  const renderLifullDemandTable = (rows: LifullDemandRow[], focusIndex = -1) => {
+    if (!rows.length) {
+      return <div className="extra-info-lifull-empty">データ未入力</div>;
+    }
+    return (
+      <div className="extra-info-lifull-table">
+        <div className="extra-info-lifull-table-head">
+          <span>区分</span>
+          <span>検索回数</span>
+          <span>掲載物件</span>
+          <span>需給差</span>
+        </div>
+        {rows.map((row, index) => {
+          const gap =
+            typeof row.searchPct === "number" && typeof row.listingPct === "number"
+              ? row.searchPct - row.listingPct
+              : null;
+          const gapToneClass =
+            gap === null || gap === 0 ? "is-neutral" : gap > 0 ? "is-positive" : "is-negative";
+          const isFocus = focusIndex >= 0 && index === focusIndex;
+          const isNear = focusIndex >= 0 && Math.abs(index - focusIndex) === 1;
+          return (
+            <div
+              key={`${row.bucket}-${index}`}
+              className={`extra-info-lifull-table-row${isFocus ? " is-focus" : isNear ? " is-nearby" : ""}`}
+            >
+              <span>{row.bucket}</span>
+              <span>{formatLifullPercent(row.searchPct)}</span>
+              <span>{formatLifullPercent(row.listingPct)}</span>
+              <span className={`is-demand-gap ${gapToneClass}`}>
+                {gap === null ? "—" : `${gap >= 0 ? "+" : ""}${gap.toFixed(1)}pt`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const renderLocationOptionList = (
@@ -1786,6 +2158,108 @@ export default function Home() {
       };
     })();
 
+    const lifullDemandItem = (() => {
+      const demand = extraInfo.lifullDemand;
+      const categoryRows: Array<{ label: string; rows: LifullDemandRow[]; focusIndex: number }> = [
+        { label: "間取り", rows: demand.layoutRows, focusIndex: lifullRowFocusIndexes.layout },
+        { label: "家賃", rows: demand.rentRows, focusIndex: lifullRowFocusIndexes.rent },
+        { label: "広さ", rows: demand.areaRows, focusIndex: lifullRowFocusIndexes.area },
+        { label: "築年", rows: demand.ageRows, focusIndex: lifullRowFocusIndexes.age },
+        { label: "駅徒歩", rows: demand.stationWalkRows, focusIndex: lifullRowFocusIndexes.walk },
+      ];
+      const availableCategories = categoryRows.filter((item) => item.rows.length > 0);
+      const focusGaps = categoryRows
+        .map((item) => {
+          if (item.focusIndex < 0) return null;
+          const row = item.rows[item.focusIndex];
+          if (!row) return null;
+          if (typeof row.searchPct !== "number" || typeof row.listingPct !== "number") return null;
+          return {
+            label: item.label,
+            gap: row.searchPct - row.listingPct,
+          };
+        })
+        .filter((item): item is { label: string; gap: number } => item !== null);
+
+      if (
+        availableCategories.length === 0 &&
+        demand.heatmapLevel === null &&
+        !demand.heatmapLabel.trim()
+      ) {
+        return {
+          label: "LIFULL需要マップ",
+          max: 15,
+          score: null as number | null,
+          reason: "LIFULL需要マップの解析結果が未入力のため未評価です。",
+          warning: false,
+        };
+      }
+
+      const gapBandScore = (gap: number) => {
+        if (gap >= 8) return 3;
+        if (gap >= 4) return 2;
+        if (gap >= 0) return 1;
+        if (gap >= -3) return 0;
+        if (gap >= -6) return -1;
+        if (gap >= -10) return -2;
+        return -3;
+      };
+      const focusGapScore =
+        focusGaps.length === 0
+          ? 0
+          : clamp(
+              ((focusGaps.reduce((sum, item) => sum + gapBandScore(item.gap), 0) / focusGaps.length + 3) / 6) * 13,
+              0,
+              13
+            );
+      const heatmapScore =
+        demand.heatmapLevel === null
+          ? 0
+          : demand.heatmapLevel >= 8
+            ? 2
+            : demand.heatmapLevel >= 5
+              ? 1
+              : 0;
+      const coverageCap =
+        availableCategories.length <= 2
+          ? 8
+          : availableCategories.length === 3
+            ? 10
+            : availableCategories.length === 4
+              ? 12
+              : 15;
+      const severeNegativeCap = focusGaps.some((item) => item.gap <= -10) ? 10 : 15;
+      const scoreCap = Math.min(coverageCap, severeNegativeCap);
+      const score = clamp(Math.round((focusGapScore + heatmapScore) * 10) / 10, 0, scoreCap);
+      const focusReason =
+        focusGaps.length > 0
+          ? focusGaps
+              .map((item) => `${item.label}${item.gap >= 0 ? "+" : ""}${item.gap.toFixed(1)}pt`)
+              .join(" / ")
+          : "該当区分のハイライト未判定";
+      const capNotes: string[] = [];
+      if (availableCategories.length <= 2) capNotes.push("データ不足上限8点");
+      else if (availableCategories.length === 3) capNotes.push("データ不足上限10点");
+      else if (availableCategories.length === 4) capNotes.push("データ不足上限12点");
+      if (severeNegativeCap < 15) capNotes.push("重大マイナス上限10点");
+      const reason = `データ ${availableCategories.length}/5区分 / ${focusReason}${
+        demand.heatmapLevel !== null ? ` / ヒートマップLv${demand.heatmapLevel}` : ""
+      }${capNotes.length ? ` / ${capNotes.join("・")}` : ""}`;
+      const warning =
+        score <= 6 ||
+        focusGaps.some((item) => item.gap <= -5) ||
+        availableCategories.length <= 2 ||
+        severeNegativeCap < 15;
+
+      return {
+        label: "LIFULL需要マップ",
+        max: 15,
+        score,
+        reason,
+        warning,
+      };
+    })();
+
     const populationItem = (() => {
       const rows = (populationSummary?.actualRows ?? [])
         .map((row) => ({
@@ -2026,28 +2500,44 @@ export default function Home() {
       const floodPenaltyMap = new Map<string, number>(
         FLOOD_SEVERITY_OPTIONS.map((option) => [option.value, option.penalty])
       );
+      const inlandFloodPenaltyMap = new Map<string, number>(
+        INLAND_FLOOD_SEVERITY_OPTIONS.map((option) => [option.value, option.penalty])
+      );
       const sedimentPenaltyMap = new Map<string, number>(
         SEDIMENT_SEVERITY_OPTIONS.map((option) => [option.value, option.penalty])
       );
       const selected: Array<{ label: string; severity: string }> = [];
       let totalPenalty = 0;
 
-      const addPenalty = (key: HazardTypeKey, selection: HazardSelection, isFlood: boolean) => {
+      const addPenalty = (
+        key: HazardTypeKey,
+        selection: HazardSelection,
+        hazardKind: "flood" | "inlandFlood" | "sediment"
+      ) => {
         if (!selection.enabled) return;
-        const penalty = isFlood
-          ? floodPenaltyMap.get(selection.severity) ?? 0
-          : sedimentPenaltyMap.get(selection.severity) ?? 0;
+        const penalty =
+          hazardKind === "flood"
+            ? floodPenaltyMap.get(selection.severity) ?? 0
+            : hazardKind === "inlandFlood"
+              ? inlandFloodPenaltyMap.get(selection.severity) ?? 0
+              : sedimentPenaltyMap.get(selection.severity) ?? 0;
         totalPenalty += penalty;
-        const severityLabel = isFlood
-          ? FLOOD_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ?? "未設定"
-          : SEDIMENT_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ?? "未設定";
+        const severityLabel =
+          hazardKind === "flood"
+            ? FLOOD_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ?? "未設定"
+            : hazardKind === "inlandFlood"
+              ? INLAND_FLOOD_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ??
+                "未設定"
+              : SEDIMENT_SEVERITY_OPTIONS.find((option) => option.value === selection.severity)?.label ??
+                "未設定";
         selected.push({ label: HAZARD_TYPE_LABELS[key], severity: severityLabel });
       };
 
-      addPenalty("flood", extraInfo.hazard.flood, true);
-      addPenalty("collapse", extraInfo.hazard.collapse, false);
-      addPenalty("debrisFlow", extraInfo.hazard.debrisFlow, false);
-      addPenalty("landslide", extraInfo.hazard.landslide, false);
+      addPenalty("flood", extraInfo.hazard.flood, "flood");
+      addPenalty("inlandFlood", extraInfo.hazard.inlandFlood, "inlandFlood");
+      addPenalty("collapse", extraInfo.hazard.collapse, "sediment");
+      addPenalty("debrisFlow", extraInfo.hazard.debrisFlow, "sediment");
+      addPenalty("landslide", extraInfo.hazard.landslide, "sediment");
 
       const max = 15;
       const score = clamp(max - totalPenalty, 0, max);
@@ -2146,6 +2636,7 @@ export default function Home() {
     const breakdown = [
       comparableItem,
       rentMarketItem,
+      lifullDemandItem,
       populationItem,
       ridershipItem,
       vacancyItem,
@@ -2194,6 +2685,8 @@ export default function Home() {
     landPriceSummary,
     populationSummary,
     ridershipSummary,
+    lifullRowFocusIndexes,
+    extraInfo.lifullDemand,
     extraInfo.hazard,
     vacancySummary,
   ]);
@@ -2203,6 +2696,7 @@ export default function Home() {
     return {
       comparable: lookup.get("近似売り物件利回り") ?? null,
       rentMarket: lookup.get("周辺家賃相場") ?? null,
+      lifullDemand: lookup.get("LIFULL需要マップ") ?? null,
       population: lookup.get("人口推移") ?? null,
       ridership: lookup.get("乗降客数") ?? null,
       vacancy: lookup.get("空室率") ?? null,
@@ -2331,6 +2825,108 @@ export default function Home() {
         [itemId]: checked,
       },
     }));
+  };
+
+  const updateLifullHeatmapLevel = (value: string) => {
+    const nextLevel = value ? Number(value) : null;
+    setExtraInfo((prev) => ({
+      ...prev,
+      lifullDemand: {
+        ...prev.lifullDemand,
+        heatmapLevel:
+          nextLevel !== null &&
+          Number.isFinite(nextLevel) &&
+          nextLevel >= 1 &&
+          nextLevel <= 10
+            ? Math.round(nextLevel)
+            : null,
+      },
+    }));
+  };
+
+  const handleLifullDemandFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []).filter((file) => {
+      if (file.type.startsWith("image/")) return true;
+      if (file.type === "application/pdf") return true;
+      return file.name.toLowerCase().endsWith(".pdf");
+    });
+    event.target.value = "";
+    setLifullDemandFiles(files);
+    setLifullDemandError(null);
+    setLifullDemandNotice(files.length > 0 ? `${files.length}件のファイルを選択` : null);
+  };
+
+  const handleAnalyzeLifullDemand = async () => {
+    if (lifullDemandFiles.length === 0) {
+      setLifullDemandError("PDFまたは画像ファイルを選択してください。");
+      return;
+    }
+    setLifullDemandLoading(true);
+    setLifullDemandError(null);
+    setLifullDemandNotice(null);
+    try {
+      const formData = new FormData();
+      lifullDemandFiles.forEach((file) => {
+        formData.append("files", file);
+      });
+      const response = await fetch("/api/lifull-demand", {
+        method: "POST",
+        body: formData,
+      });
+      const responseText = await response.text();
+      const payload = (() => {
+        try {
+          return JSON.parse(responseText) as LifullDemandAnalyzeResponse;
+        } catch {
+          return {} as LifullDemandAnalyzeResponse;
+        }
+      })();
+      if (!response.ok || !payload?.data) {
+        const fallbackDetails =
+          payload?.details ??
+          (responseText && responseText.trim()
+            ? `${responseText.trim().slice(0, 180)}${responseText.trim().length > 180 ? "..." : ""}`
+            : null);
+        const details = fallbackDetails ? ` (${fallbackDetails})` : "";
+        throw new Error(
+          `${payload?.error ?? "LIFULL需要マップの解析に失敗しました。"} [HTTP ${response.status}]${details}`
+        );
+      }
+      const parsed = payload.data;
+      const nowIso = new Date().toISOString();
+      setExtraInfo((prev) => ({
+        ...prev,
+        lifullDemand: {
+          heatmapLevel:
+            typeof parsed.heatmapLevel === "number" &&
+            Number.isFinite(parsed.heatmapLevel) &&
+            parsed.heatmapLevel >= 1 &&
+            parsed.heatmapLevel <= 10
+              ? Math.round(parsed.heatmapLevel)
+              : prev.lifullDemand.heatmapLevel,
+          heatmapLabel: parsed.heatmapLabel ?? "",
+          sourceArea: parsed.sourceArea ?? "",
+          analyzedAt: nowIso,
+          rentRows: Array.isArray(parsed.rentRows) ? parsed.rentRows : [],
+          ageRows: Array.isArray(parsed.ageRows) ? parsed.ageRows : [],
+          areaRows: Array.isArray(parsed.areaRows) ? parsed.areaRows : [],
+          layoutRows: Array.isArray(parsed.layoutRows) ? parsed.layoutRows : [],
+          stationWalkRows: Array.isArray(parsed.stationWalkRows) ? parsed.stationWalkRows : [],
+        },
+      }));
+      const warningText =
+        Array.isArray(payload.warnings) && payload.warnings.length > 0
+          ? payload.warnings.join(" / ")
+          : null;
+      setLifullDemandNotice(warningText ?? "解析結果を反映しました。");
+      setLifullDemandFiles([]);
+    } catch (error) {
+      setLifullDemandError(
+        error instanceof Error ? error.message : "LIFULL需要マップの解析に失敗しました。"
+      );
+    } finally {
+      setLifullDemandLoading(false);
+    }
   };
 
   const fetchLocationChecklistByAddress = async (addressInput: string) => {
@@ -2760,6 +3356,7 @@ export default function Home() {
     patch: Partial<PropertyInput>;
     listing: ImportHistoryItem["listing"];
     url: string;
+    cacheEnabled: boolean;
   }) => {
     const merged = { ...inputData, ...payload.patch };
     const { data, autoFilled } = applyEstimatedDefaultsWithMeta(merged);
@@ -2792,7 +3389,7 @@ export default function Home() {
     void (async () => {
       let cachedMessages: { role: "user" | "assistant"; content: string }[] = [];
       let cachedExtraInfo = createDefaultExtraInfo();
-      if (url && user) {
+      if (payload.cacheEnabled && url && user) {
         const cached = await loadAnalysisCache(url);
         const cachedRaw = cached?.aiMessages;
         cachedExtraInfo = normalizeExtraInfo(cached?.extraInfo);
@@ -2813,8 +3410,14 @@ export default function Home() {
         setAiError(null);
         setPendingAiPromptId(null);
         setAiCacheHit(true);
-      } else if (payload.listing) {
-        setPendingAiPromptId(url);
+      } else {
+        setAiMessages([]);
+        setAiCacheHit(false);
+        if (payload.listing) {
+          setPendingAiPromptId(url);
+        } else {
+          setPendingAiPromptId(null);
+        }
       }
 
       if (url && user) {
@@ -2880,6 +3483,58 @@ export default function Home() {
       setAiMessages([]);
     })();
     setFormVersion((prev) => prev + 1);
+  };
+
+  const handleListingLayoutDetailsChange = (rows: ListingLayoutDetail[]) => {
+    if (!selectedImportId || !selectedImport?.listing) return;
+    const normalizedRows = rows
+      .map((row) => ({
+        layout: typeof row.layout === "string" ? row.layout.trim() : "",
+        floor: typeof row.floor === "string" ? row.floor.trim() : "",
+        monthlyRentYen:
+          typeof row.monthlyRentYen === "number" && Number.isFinite(row.monthlyRentYen)
+            ? Math.round(row.monthlyRentYen)
+            : null,
+        areaSqm:
+          typeof row.areaSqm === "number" && Number.isFinite(row.areaSqm)
+            ? Math.round(row.areaSqm * 100) / 100
+            : null,
+      }))
+      .filter(
+        (row) =>
+          row.layout.length > 0 ||
+          row.floor.length > 0 ||
+          (typeof row.monthlyRentYen === "number" && Number.isFinite(row.monthlyRentYen)) ||
+          (typeof row.areaSqm === "number" && Number.isFinite(row.areaSqm))
+      )
+      .slice(0, 20);
+    const nextListing = {
+      ...selectedImport.listing,
+      layoutDetails: normalizedRows,
+    };
+
+    setImportHistory((prev) =>
+      prev.map((item) => {
+        if (item.id !== selectedImportId) return item;
+        if (!item.listing) return item;
+        return { ...item, listing: nextListing };
+      })
+    );
+
+    if (user && selectedImport.url) {
+      void saveAnalysisCache({
+        url: selectedImport.url,
+        listing: nextListing,
+      });
+      if (analysisRunIdRef.current && analysisRunUrlRef.current === selectedImport.url) {
+        void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
+          listing: nextListing,
+          updatedAt: serverTimestamp(),
+        }).catch((error) => {
+          console.warn("analysis run listing update failed", error);
+        });
+      }
+    }
   };
 
   const handleAnalysisRunSelect = (run: AnalysisRunItem) => {
@@ -3740,6 +4395,369 @@ export default function Home() {
     if (item.format === "yen") return formatYen(numeric);
     if (item.format === "ratio") return formatRatio(numeric);
     return formatPercent(numeric);
+  };
+
+  const lifullFocusSnapshot = useMemo(() => {
+    const categories: Array<{
+      key: "layout" | "rent" | "area" | "age" | "walk";
+      label: string;
+      rows: LifullDemandRow[];
+      focusIndex: number;
+    }> = [
+      {
+        key: "layout",
+        label: "間取り",
+        rows: extraInfo.lifullDemand.layoutRows,
+        focusIndex: lifullRowFocusIndexes.layout,
+      },
+      {
+        key: "rent",
+        label: "家賃",
+        rows: extraInfo.lifullDemand.rentRows,
+        focusIndex: lifullRowFocusIndexes.rent,
+      },
+      {
+        key: "area",
+        label: "広さ",
+        rows: extraInfo.lifullDemand.areaRows,
+        focusIndex: lifullRowFocusIndexes.area,
+      },
+      {
+        key: "age",
+        label: "築年",
+        rows: extraInfo.lifullDemand.ageRows,
+        focusIndex: lifullRowFocusIndexes.age,
+      },
+      {
+        key: "walk",
+        label: "駅徒歩",
+        rows: extraInfo.lifullDemand.stationWalkRows,
+        focusIndex: lifullRowFocusIndexes.walk,
+      },
+    ];
+    return categories.map((category) => {
+      const focusRow =
+        category.focusIndex >= 0 ? category.rows[category.focusIndex] ?? null : null;
+      const gap =
+        focusRow &&
+        typeof focusRow.searchPct === "number" &&
+        typeof focusRow.listingPct === "number"
+          ? Math.round((focusRow.searchPct - focusRow.listingPct) * 10) / 10
+          : null;
+      return {
+        key: category.key,
+        label: category.label,
+        rowCount: category.rows.length,
+        focusIndex: category.focusIndex,
+        focusBucket: focusRow?.bucket ?? null,
+        focusSearchPct:
+          typeof focusRow?.searchPct === "number" ? focusRow.searchPct : null,
+        focusListingPct:
+          typeof focusRow?.listingPct === "number" ? focusRow.listingPct : null,
+        focusGapPt: gap,
+      };
+    });
+  }, [
+    extraInfo.lifullDemand.ageRows,
+    extraInfo.lifullDemand.areaRows,
+    extraInfo.lifullDemand.layoutRows,
+    extraInfo.lifullDemand.rentRows,
+    extraInfo.lifullDemand.stationWalkRows,
+    lifullRowFocusIndexes.age,
+    lifullRowFocusIndexes.area,
+    lifullRowFocusIndexes.layout,
+    lifullRowFocusIndexes.rent,
+    lifullRowFocusIndexes.walk,
+  ]);
+
+  const handleExportSnapshot = () => {
+    try {
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const timestampToken = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
+        now.getHours()
+      )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const payload = {
+        schemaVersion: 2,
+        exportedAt: now.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? null,
+        source: {
+          selectedImportId,
+          selectedImport: selectedImport
+            ? {
+                id: selectedImport.id,
+                url: selectedImport.url,
+                listing: selectedImport.listing ?? null,
+              }
+            : null,
+          importHistory: importHistory.map((item) => ({
+            id: item.id,
+            url: item.url,
+            listing: item.listing ?? null,
+            input: item.input,
+            autoFilled: item.autoFilled,
+            createdAt: item.createdAt,
+          })),
+        },
+        input: inputData,
+        autoFilledKeys,
+        investmentInput,
+        extraInfo,
+        output: {
+          selectedYear,
+          selectedResult: selectedResult ?? null,
+          baseResults: results,
+          stressResults: stressResults ?? null,
+          safetyScore: {
+            score: safetyScore,
+            tone: safetyTone,
+          },
+          kpis: kpiItems.map((item) => ({
+            id: item.id,
+            label: item.label,
+            value: item.value,
+            formatted: renderKpiValue(item),
+            risk: item.risk,
+            note: item.note ?? null,
+          })),
+          investmentScore,
+          additionalInfoScore,
+          additionalInfoBreakdownByLabel: additionalBreakdownByLabel,
+          extraInfoSummaries: {
+            comparableSummary,
+            populationSummary,
+            ridershipSummary,
+            vacancySummary,
+            landPriceSummary,
+          },
+          lifullDemandEvaluation: {
+            focusIndexes: lifullRowFocusIndexes,
+            focusRows: lifullFocusSnapshot,
+            notice: lifullDemandNotice,
+            error: lifullDemandError,
+          },
+          cashFlowSummary: {
+            tenYearCashFlowCumulative,
+            tenYearCashFlowWithExit: inputData.exitEnabled ? kpiCashFlow10yWithExit : null,
+            total35YearCashFlow: baseSummary.totalCashFlow,
+          },
+          exitSummary: {
+            enabled: inputData.exitEnabled,
+            exitYear: inputData.exitEnabled ? exitYear : null,
+            salePrice: inputData.exitEnabled ? exitSalePrice : null,
+            netProceeds: inputData.exitEnabled ? exitNetProceeds : null,
+            irr: inputData.exitEnabled ? exitIrr : null,
+            npv: inputData.exitEnabled ? exitNpv : null,
+            equityMultiple: inputData.exitEnabled ? baseEquityMultiple : null,
+          },
+          scenarioSummary: {
+            enabled: inputData.scenarioEnabled,
+            base: baseSummary,
+            stress: stressSummary,
+            stressExit,
+          },
+        },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `pro-estate-export-${timestampToken}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch (error) {
+      console.warn("export snapshot failed", error);
+      window.alert("エクスポートに失敗しました。");
+    }
+  };
+
+  const handleExportAiBrief = () => {
+    try {
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, "0");
+      const timestampToken = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
+        now.getHours()
+      )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const sanitizeText = (value: string | null | undefined) =>
+        (value ?? "-").replace(/\r?\n/g, " / ");
+      const selectedListing = selectedImport?.listing ?? null;
+      const selectedKpis = kpiItems
+        .map((item) => `- ${item.label}: ${renderKpiValue(item)} (risk=${item.risk})`)
+        .join("\n");
+      const additionalRows = additionalInfoScore.breakdown
+        .map(
+          (item) =>
+            `- ${item.label}: ${
+              item.score === null ? "N/A" : `${item.score}/${item.max}`
+            } | note=${sanitizeText(item.reason)}${item.warning ? " | warning=true" : ""}`
+        )
+        .join("\n");
+      const lifullRows = lifullFocusSnapshot
+        .map(
+          (row) =>
+            `- ${row.label}: bucket=${row.focusBucket ?? "-"}, gap=${
+              typeof row.focusGapPt === "number" ? `${row.focusGapPt}pt` : "-"
+            }, search=${typeof row.focusSearchPct === "number" ? `${row.focusSearchPct}%` : "-"}, listing=${
+              typeof row.focusListingPct === "number" ? `${row.focusListingPct}%` : "-"
+            }`
+        )
+        .join("\n");
+      const yearlyTable = results
+        .map((row) =>
+          [
+            row.year,
+            Math.round(row.income),
+            Math.round(row.expense),
+            Math.round(row.loanPaymentTotal),
+            Math.round(row.cashFlowPreTax),
+            Math.round(row.cashFlowPostTax),
+            Math.round(row.loanBalance),
+          ].join(",")
+        )
+        .join("\n");
+      const machinePayload = {
+        schemaVersion: 1,
+        exportedAt: now.toISOString(),
+        source: {
+          selectedImportId,
+          selectedImport: selectedImport
+            ? {
+                id: selectedImport.id,
+                url: selectedImport.url,
+                listing: selectedImport.listing ?? null,
+              }
+            : null,
+        },
+        input: inputData,
+        investmentInput,
+        extraInfo,
+        output: {
+          selectedYear,
+          selectedResult: selectedResult ?? null,
+          baseSummary,
+          stressSummary,
+          stressExit,
+          kpis: kpiItems.map((item) => ({
+            id: item.id,
+            label: item.label,
+            value: item.value,
+            formatted: renderKpiValue(item),
+            risk: item.risk,
+          })),
+          investmentScore,
+          additionalInfoScore,
+          additionalInfoBreakdownByLabel: additionalBreakdownByLabel,
+          lifullDemandEvaluation: {
+            focusIndexes: lifullRowFocusIndexes,
+            focusRows: lifullFocusSnapshot,
+          },
+          cashFlowSummary: {
+            tenYearCashFlowCumulative,
+            tenYearCashFlowWithExit: inputData.exitEnabled ? kpiCashFlow10yWithExit : null,
+            total35YearCashFlow: baseSummary.totalCashFlow,
+          },
+          exitSummary: {
+            enabled: inputData.exitEnabled,
+            exitYear: inputData.exitEnabled ? exitYear : null,
+            salePrice: inputData.exitEnabled ? exitSalePrice : null,
+            netProceeds: inputData.exitEnabled ? exitNetProceeds : null,
+            irr: inputData.exitEnabled ? exitIrr : null,
+            npv: inputData.exitEnabled ? exitNpv : null,
+            equityMultiple: inputData.exitEnabled ? baseEquityMultiple : null,
+          },
+          baseResults: results,
+          stressResults: stressResults ?? null,
+        },
+      };
+      const aiBrief = `# AI分析連携用エクスポート
+
+このドキュメントは、外部AIが物件・融資条件・シミュレーション結果を短時間で理解するための要約です。
+
+## 1. 物件サマリー
+- 物件名: ${sanitizeText(selectedListing?.propertyName ?? selectedListing?.title ?? "-")}
+- 所在地: ${sanitizeText(selectedListing?.address)}
+- 交通: ${sanitizeText(selectedListing?.access)}
+- 構造: ${sanitizeText(selectedListing?.structure)}
+- 築年数: ${
+        typeof selectedListing?.buildingAgeYears === "number" ? `${selectedListing.buildingAgeYears}年` : "-"
+      }
+- 総戸数: ${
+        typeof selectedListing?.unitCount === "number"
+          ? `${selectedListing.unitCount}戸`
+          : typeof selectedListing?.totalUnits === "number"
+            ? `${selectedListing.totalUnits}戸`
+            : "-"
+      }
+- URL: ${selectedImport?.url ?? "-"}
+
+## 2. 融資・運用の前提
+- 融資対象モード: ${inputData.loanCoverageMode === "PRICE_AND_INITIAL" ? "物件価格+初期費用" : "物件価格のみ"}
+- 自己資金比率: ${inputData.equityRatio}%
+- 金利: ${inputData.interestRate}%
+- 返済期間: ${inputData.loanDuration}年
+- 入居率: ${inputData.occupancyRate}%
+- 月額賃料（満室想定）: ${Math.round(inputData.monthlyRent).toLocaleString()}円
+- その他諸費用率: ${inputData.miscCostRate}%
+- 融資手数料率: ${inputData.loanFeeRate}%
+
+## 3. 主要結果（今回選択年: ${selectedYear}年目）
+- 10年CF累計（税引後）: ${Math.round(tenYearCashFlowCumulative).toLocaleString()}円
+- 10年CF累計+売却手残り: ${
+        inputData.exitEnabled && Number.isFinite(kpiCashFlow10yWithExit)
+          ? `${Math.round(kpiCashFlow10yWithExit).toLocaleString()}円`
+          : "-"
+      }
+- 35年CF累計（税引後）: ${Math.round(baseSummary.totalCashFlow).toLocaleString()}円
+- 出口IRR: ${
+        inputData.exitEnabled && exitIrr !== null ? `${(exitIrr * 100).toFixed(2)}%` : "-"
+      }
+- 出口NPV: ${inputData.exitEnabled && exitNpv !== null ? `${Math.round(exitNpv).toLocaleString()}円` : "-"}
+- Equity Multiple: ${
+        inputData.exitEnabled && baseEquityMultiple !== null ? baseEquityMultiple.toFixed(2) : "-"
+      }x
+
+## 4. KPI一覧
+${selectedKpis || "-"}
+
+## 5. 追加情報スコア
+- total: ${additionalInfoScore.totalScore}/100
+- grade: ${additionalInfoScore.grade}
+- decision: ${additionalInfoScore.decision}
+- confidence: ${additionalInfoScore.confidence}%
+
+### 5-1. 内訳
+${additionalRows || "-"}
+
+### 5-2. LIFULL需要マップ（該当ハイライト）
+${lifullRows || "-"}
+
+## 6. 年次サマリーCSV（year,income,expense,loanPaymentTotal,cashFlowPreTax,cashFlowPostTax,loanBalance）
+${yearlyTable}
+
+## 7. 機械可読データ(JSON)
+\`\`\`json
+${JSON.stringify(machinePayload, null, 2)}
+\`\`\`
+`;
+      const blob = new Blob([aiBrief], {
+        type: "text/markdown;charset=utf-8",
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `pro-estate-ai-brief-${timestampToken}.md`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+    } catch (error) {
+      console.warn("AI export failed", error);
+      window.alert("AI向けエクスポートに失敗しました。");
+    }
   };
 
   const investmentScore = useMemo(() => {
@@ -5293,6 +6311,22 @@ export default function Home() {
             <button
               type="button"
               className="history-button"
+              onClick={handleExportAiBrief}
+              title="AI向けエクスポート（Markdown）"
+            >
+              <FileText size={20} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="history-button"
+              onClick={handleExportSnapshot}
+              title="JSONエクスポート"
+            >
+              <Download size={20} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="history-button"
               onClick={() => setHistoryOpen((prev) => !prev)}
               aria-expanded={historyOpen}
               aria-controls="history-drawer"
@@ -5483,6 +6517,7 @@ export default function Home() {
                       ? selectedImport.url
                       : null
                   }
+                  onLayoutDetailsChange={handleListingLayoutDetailsChange}
                 />
               </div>
             </>
@@ -5609,7 +6644,7 @@ export default function Home() {
                 </div>
 
                 <div className="extra-info-scroll-note">
-                  横にスクロールすると「失敗防止チェックリスト」「周辺家賃相場」「人口推移」「乗降客数」「周辺環境チェック」「空室率」「ハザードマップ」「基準地価」まで表示されます。
+                  横にスクロールすると「失敗防止チェックリスト」「LIFULL需要マップ」「周辺家賃相場」「人口推移」「乗降客数」「周辺環境チェック」「空室率」「ハザードマップ」「基準地価」まで表示されます。
                 </div>
                 <div className="extra-info-scroll">
                   <div className="extra-info-row">
@@ -5680,6 +6715,143 @@ export default function Home() {
                       </div>
                     ) : null}
                   </div>
+                </div>
+
+                <div className="extra-info-block extra-info-block-lifull">
+                  <div className="extra-info-title-row">
+                    <div className="extra-info-title">LIFULL 需要マップ</div>
+                    <span
+                      className={`extra-info-title-score${
+                        additionalBreakdownByLabel.lifullDemand?.warning ? " is-warn" : ""
+                      } ${getAdditionalItemScoreToneClass(additionalBreakdownByLabel.lifullDemand)}`}
+                    >
+                      {additionalBreakdownByLabel.lifullDemand?.score === null
+                        ? "N/A"
+                        : `${additionalBreakdownByLabel.lifullDemand?.score}/${additionalBreakdownByLabel.lifullDemand?.max}`}
+                    </span>
+                  </div>
+                  {additionalBreakdownByLabel.lifullDemand?.reason ? (
+                    <div className="extra-info-title-note">
+                      {additionalBreakdownByLabel.lifullDemand.reason}
+                    </div>
+                  ) : null}
+                  <div className="extra-info-title-note">
+                    LIFULLの対象ページをPDF保存し、アップロードすると自動解析で表を作成します。
+                  </div>
+                  <div className="extra-info-lifull-upload">
+                    <input
+                      type="file"
+                      accept="application/pdf,image/*,.pdf"
+                      multiple
+                      onChange={handleLifullDemandFileChange}
+                    />
+                    <button
+                      type="button"
+                      className="chip-button"
+                      onClick={handleAnalyzeLifullDemand}
+                      disabled={lifullDemandLoading || lifullDemandFiles.length === 0}
+                    >
+                      {lifullDemandLoading ? "解析中..." : "解析"}
+                    </button>
+                  </div>
+                  {lifullDemandFiles.length > 0 ? (
+                    <div className="extra-info-lifull-files">
+                      {lifullDemandFiles.map((file) => (
+                        <span key={`${file.name}-${file.size}`}>{file.name}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {lifullDemandError ? (
+                    <div className="extra-info-location-error">{lifullDemandError}</div>
+                  ) : null}
+                  {lifullDemandNotice ? (
+                    <div className="extra-info-location-note">{lifullDemandNotice}</div>
+                  ) : null}
+
+                  <div className="extra-info-lifull-heatmap-row">
+                    <span>賃貸需要ヒートマップ</span>
+                    <select
+                      className="field-select"
+                      value={extraInfo.lifullDemand.heatmapLevel ?? ""}
+                      onChange={(event) => updateLifullHeatmapLevel(event.target.value)}
+                    >
+                      <option value="">未選択</option>
+                      {LIFULL_HEATMAP_LEVEL_OPTIONS.map((option) => (
+                        <option key={`heatmap-level-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {extraInfo.lifullDemand.heatmapLevel !== null ? (
+                    <div className="extra-info-lifull-heatmap-preview">
+                      <span
+                        className="extra-info-lifull-heatmap-dot"
+                        style={{
+                          background:
+                            LIFULL_HEATMAP_LEVEL_OPTIONS.find(
+                              (option) => option.value === extraInfo.lifullDemand.heatmapLevel
+                            )?.color ?? "#94a3b8",
+                        }}
+                      />
+                      <strong>レベル {extraInfo.lifullDemand.heatmapLevel}</strong>
+                    </div>
+                  ) : null}
+                  {extraInfo.lifullDemand.heatmapLabel ? (
+                    <div className="extra-info-title-note">AI判定: {extraInfo.lifullDemand.heatmapLabel}</div>
+                  ) : null}
+                  {extraInfo.lifullDemand.sourceArea ? (
+                    <div className="extra-info-title-note">対象エリア: {extraInfo.lifullDemand.sourceArea}</div>
+                  ) : null}
+                  {extraInfo.lifullDemand.analyzedAt ? (
+                    <div className="extra-info-title-note">
+                      最終解析: {new Date(extraInfo.lifullDemand.analyzedAt).toLocaleString("ja-JP")}
+                    </div>
+                  ) : null}
+
+                  <details className="extra-info-summary-details" open>
+                    <summary>
+                      <span>賃貸入居者の希望間取り</span>
+                    </summary>
+                    <div className="extra-info-summary-detail-body">
+                      {renderLifullDemandTable(extraInfo.lifullDemand.layoutRows, lifullRowFocusIndexes.layout)}
+                    </div>
+                  </details>
+                  <details className="extra-info-summary-details" open>
+                    <summary>
+                      <span>賃貸入居者の希望家賃</span>
+                    </summary>
+                    <div className="extra-info-summary-detail-body">
+                      {renderLifullDemandTable(extraInfo.lifullDemand.rentRows, lifullRowFocusIndexes.rent)}
+                    </div>
+                  </details>
+                  <details className="extra-info-summary-details" open>
+                    <summary>
+                      <span>賃貸入居者の希望する住戸の広さ</span>
+                    </summary>
+                    <div className="extra-info-summary-detail-body">
+                      {renderLifullDemandTable(extraInfo.lifullDemand.areaRows, lifullRowFocusIndexes.area)}
+                    </div>
+                  </details>
+                  <details className="extra-info-summary-details" open>
+                    <summary>
+                      <span>賃貸入居者の希望築年数</span>
+                    </summary>
+                    <div className="extra-info-summary-detail-body">
+                      {renderLifullDemandTable(extraInfo.lifullDemand.ageRows, lifullRowFocusIndexes.age)}
+                    </div>
+                  </details>
+                  <details className="extra-info-summary-details" open>
+                    <summary>
+                      <span>賃貸入居者の希望する駅徒歩</span>
+                    </summary>
+                    <div className="extra-info-summary-detail-body">
+                      {renderLifullDemandTable(
+                        extraInfo.lifullDemand.stationWalkRows,
+                        lifullRowFocusIndexes.walk
+                      )}
+                    </div>
+                  </details>
                 </div>
 
                 <div className="extra-info-block">
@@ -6266,9 +7438,14 @@ export default function Home() {
                     <div className="extra-info-title-note">{additionalBreakdownByLabel.hazard.reason}</div>
                   ) : null}
                   <div className="extra-info-hazard-list">
-                    {(["flood", "collapse", "debrisFlow", "landslide"] as HazardTypeKey[]).map((key) => {
+                    {(["flood", "inlandFlood", "collapse", "debrisFlow", "landslide"] as HazardTypeKey[]).map((key) => {
                       const selection = extraInfo.hazard[key];
-                      const options = key === "flood" ? FLOOD_SEVERITY_OPTIONS : SEDIMENT_SEVERITY_OPTIONS;
+                      const options =
+                        key === "flood"
+                          ? FLOOD_SEVERITY_OPTIONS
+                          : key === "inlandFlood"
+                            ? INLAND_FLOOD_SEVERITY_OPTIONS
+                            : SEDIMENT_SEVERITY_OPTIONS;
                       return (
                         <div key={key} className="extra-info-hazard-item">
                           <label className="extra-info-hazard-check">

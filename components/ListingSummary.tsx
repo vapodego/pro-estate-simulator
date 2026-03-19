@@ -1,10 +1,12 @@
 "use client";
 
-import type { ListingPreview } from "./RakumachiImporter";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ListingLayoutDetail, ListingPreview } from "./RakumachiImporter";
 
 type ListingSummaryProps = {
   listing: ListingPreview | null;
   listingUrl?: string | null;
+  onLayoutDetailsChange?: (rows: ListingLayoutDetail[]) => void;
 };
 
 type ListingFact = {
@@ -41,6 +43,84 @@ const formatArea = (value: number | null | undefined) => {
 const hasValue = (value: unknown) =>
   value !== null && value !== undefined && value !== "";
 
+const toInputManYen = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? String(Math.round((value / 10000) * 100) / 100)
+    : "";
+
+const toInputArea = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "";
+
+const parseManYenInput = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed.replace(/,/g, ""));
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 10000);
+};
+
+const parseAreaInput = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed.replace(/,/g, ""));
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100) / 100;
+};
+
+const normalizeRows = (rows: ListingLayoutDetail[]) =>
+  rows
+    .map((row) => ({
+      layout: row.layout.trim(),
+      floor: typeof row.floor === "string" ? row.floor.trim() : "",
+      monthlyRentYen:
+        typeof row.monthlyRentYen === "number" && Number.isFinite(row.monthlyRentYen)
+          ? Math.round(row.monthlyRentYen)
+          : null,
+      areaSqm:
+        typeof row.areaSqm === "number" && Number.isFinite(row.areaSqm)
+          ? Math.round(row.areaSqm * 100) / 100
+          : null,
+    }))
+    .filter(
+      (row) =>
+        row.layout.length > 0 ||
+        row.floor.length > 0 ||
+        (typeof row.monthlyRentYen === "number" && Number.isFinite(row.monthlyRentYen)) ||
+        (typeof row.areaSqm === "number" && Number.isFinite(row.areaSqm))
+    )
+    .slice(0, 20);
+
+const buildFallbackLayoutRows = (listing: ListingPreview): ListingLayoutDetail[] => {
+  const raw = (listing.layout ?? "").trim();
+  if (!raw) return [];
+  const normalized = raw.replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+  const tokens = Array.from(
+    normalized.matchAll(/(ワンルーム|[1-9][0-9]?S?LDK|[1-9][0-9]?SDK|[1-9][0-9]?LDK|[1-9][0-9]?DK|[1-9][0-9]?K|[1-9][0-9]?R)/g)
+  ).map((match) => (match[1] === "ワンルーム" ? "1R" : match[1]));
+  const layouts = tokens.length > 0 ? Array.from(new Set(tokens)) : [raw];
+  const unitsRaw = listing.unitCount ?? listing.totalUnits ?? null;
+  const units =
+    typeof unitsRaw === "number" && Number.isFinite(unitsRaw) && unitsRaw > 0 ? unitsRaw : null;
+  const unitRent =
+    typeof listing.monthlyRentYen === "number" && Number.isFinite(listing.monthlyRentYen)
+      ? units && units > 1
+        ? Math.round(listing.monthlyRentYen / units)
+        : Math.round(listing.monthlyRentYen)
+      : null;
+  const unitArea =
+    typeof listing.floorAreaSqm === "number" && Number.isFinite(listing.floorAreaSqm)
+      ? units && units > 1
+        ? Math.round((listing.floorAreaSqm / units) * 100) / 100
+        : Math.round(listing.floorAreaSqm * 100) / 100
+      : null;
+  return layouts.slice(0, 10).map((layout) => ({
+    layout,
+    floor: "",
+    monthlyRentYen: unitRent,
+    areaSqm: unitArea,
+  }));
+};
+
 const extractStationWalkMinutes = (access: string | null | undefined) => {
   if (!access) return [];
   const values: number[] = [];
@@ -63,8 +143,85 @@ const extractStationWalkMinutes = (access: string | null | undefined) => {
   return values;
 };
 
-export const ListingSummary = ({ listing, listingUrl }: ListingSummaryProps) => {
+export const ListingSummary = ({ listing, listingUrl, onLayoutDetailsChange }: ListingSummaryProps) => {
+  const initialLayoutRows = useMemo(() => {
+    if (!listing) return [];
+    if (Array.isArray(listing.layoutDetails)) {
+      return listing.layoutDetails.map((row) => ({
+        layout: typeof row.layout === "string" ? row.layout : "",
+        floor: typeof row.floor === "string" ? row.floor : "",
+        monthlyRentYen:
+          typeof row.monthlyRentYen === "number" && Number.isFinite(row.monthlyRentYen)
+            ? Math.round(row.monthlyRentYen)
+            : null,
+        areaSqm:
+          typeof row.areaSqm === "number" && Number.isFinite(row.areaSqm)
+            ? Math.round(row.areaSqm * 100) / 100
+            : null,
+      }));
+    }
+    return buildFallbackLayoutRows(listing);
+  }, [listing]);
+  const initialNormalizedSnapshot = useMemo(
+    () => JSON.stringify(normalizeRows(initialLayoutRows)),
+    [initialLayoutRows]
+  );
+  const [layoutRows, setLayoutRows] = useState<ListingLayoutDetail[]>(initialLayoutRows);
+  const latestChangeHandlerRef = useRef(onLayoutDetailsChange);
+  const lastSyncedSnapshotRef = useRef(initialNormalizedSnapshot);
+
+  useEffect(() => {
+    latestChangeHandlerRef.current = onLayoutDetailsChange;
+  }, [onLayoutDetailsChange]);
+
+  useEffect(() => {
+    setLayoutRows((prev) => {
+      const prevNormalized = JSON.stringify(normalizeRows(prev));
+      if (prevNormalized === initialNormalizedSnapshot) return prev;
+      return initialLayoutRows;
+    });
+    lastSyncedSnapshotRef.current = initialNormalizedSnapshot;
+  }, [initialLayoutRows, initialNormalizedSnapshot]);
+
+  useEffect(() => {
+    const handler = latestChangeHandlerRef.current;
+    if (!listing) return;
+    if (!handler) return;
+    const normalized = normalizeRows(layoutRows);
+    const snapshot = JSON.stringify(normalized);
+    if (snapshot === lastSyncedSnapshotRef.current) return;
+    lastSyncedSnapshotRef.current = snapshot;
+    handler(normalized);
+  }, [layoutRows, listing]);
+
   if (!listing) return null;
+
+  const updateLayoutRow = (index: number, patch: Partial<ListingLayoutDetail>) => {
+    setLayoutRows((prev) =>
+      prev.map((row, rowIndex) =>
+        rowIndex === index
+          ? {
+              layout: patch.layout ?? row.layout,
+              floor: patch.floor ?? row.floor,
+              monthlyRentYen:
+                patch.monthlyRentYen !== undefined ? patch.monthlyRentYen : row.monthlyRentYen,
+              areaSqm: patch.areaSqm !== undefined ? patch.areaSqm : row.areaSqm,
+            }
+          : row
+      )
+    );
+  };
+
+  const addLayoutRow = () => {
+    setLayoutRows((prev) => [
+      ...prev,
+      { layout: "", floor: "", monthlyRentYen: null, areaSqm: null },
+    ]);
+  };
+
+  const removeLayoutRow = (index: number) => {
+    setLayoutRows((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  };
 
   const listingUrlLabel = (() => {
     if (!listingUrl) return "";
@@ -108,6 +265,17 @@ export const ListingSummary = ({ listing, listingUrl }: ListingSummaryProps) => 
   const listingCoverageText = formatPercent(listing.buildingCoveragePercent ?? null);
   const listingFarText = formatPercent(listing.floorAreaRatioPercent ?? null);
   const listingTitle = listing.propertyName ?? listing.title ?? null;
+  const mapsEmbedApiKey = (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "").trim();
+  const mapSearchQuery = (listing.address ?? "").trim() || listingTitle || "";
+  const mapEmbedUrl = mapSearchQuery
+    ? mapsEmbedApiKey
+      ? `https://www.google.com/maps/embed/v1/place?key=${encodeURIComponent(
+          mapsEmbedApiKey
+        )}&q=${encodeURIComponent(mapSearchQuery)}&zoom=17&language=ja&maptype=roadmap`
+      : `https://maps.google.com/maps?output=embed&hl=ja&z=17&iwloc=B&q=${encodeURIComponent(
+          mapSearchQuery
+        )}`
+    : null;
   const stationWalkMinutes = extractStationWalkMinutes(listing.access ?? null);
   const stationWalkWarningMinute = stationWalkMinutes.find((minute) => minute >= 11) ?? null;
   const roadAccessHasPrivateRoad = (listing.roadAccess ?? "").includes("私道");
@@ -219,6 +387,95 @@ export const ListingSummary = ({ listing, listingUrl }: ListingSummaryProps) => 
       ) : (
         <div className="listing-empty">表示できる項目がありません。</div>
       )}
+      <div className="listing-layout-split">
+        {mapEmbedUrl ? (
+          <div className="listing-map-card">
+            <div className="listing-map-frame-wrap">
+              <iframe
+                title="物件位置マップ"
+                src={mapEmbedUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                allowFullScreen
+                className="listing-map-frame"
+              />
+            </div>
+          </div>
+        ) : null}
+        <div className="listing-layout-editor">
+          <div className="listing-layout-editor-table">
+            <div className="listing-layout-editor-header">
+              <span>間取り</span>
+              <span>階</span>
+              <span>家賃(万円/月)</span>
+              <span>広さ(㎡)</span>
+              <span>操作</span>
+            </div>
+            {layoutRows.length === 0 ? (
+              <div className="listing-layout-editor-empty">行を追加して入力してください。</div>
+            ) : (
+              layoutRows.map((row, index) => (
+                <div key={`layout-row-${index}`} className="listing-layout-editor-row">
+                  <input
+                    className="field-input listing-layout-editor-input"
+                    value={row.layout}
+                    onChange={(event) => updateLayoutRow(index, { layout: event.target.value })}
+                    placeholder="例: 1K"
+                  />
+                  <input
+                    className="field-input listing-layout-editor-input"
+                    value={row.floor}
+                    onChange={(event) => updateLayoutRow(index, { floor: event.target.value })}
+                    placeholder="例: 2階"
+                  />
+                  <input
+                    className="field-input listing-layout-editor-input"
+                    type="number"
+                    inputMode="decimal"
+                    value={toInputManYen(row.monthlyRentYen)}
+                    onChange={(event) =>
+                      updateLayoutRow(index, {
+                        monthlyRentYen: parseManYenInput(event.target.value),
+                      })
+                    }
+                    placeholder="例: 6.8"
+                  />
+                  <input
+                    className="field-input listing-layout-editor-input"
+                    type="number"
+                    inputMode="decimal"
+                    value={toInputArea(row.areaSqm)}
+                    onChange={(event) =>
+                      updateLayoutRow(index, {
+                        areaSqm: parseAreaInput(event.target.value),
+                      })
+                    }
+                    placeholder="例: 21.5"
+                  />
+                  <button
+                    type="button"
+                    className="chip-button listing-layout-editor-remove"
+                    onClick={() => removeLayoutRow(index)}
+                  >
+                    削除
+                  </button>
+                </div>
+              ))
+            )}
+            <div className="listing-layout-editor-footer">
+              <button
+                type="button"
+                className="chip-button listing-layout-editor-add"
+                onClick={addLayoutRow}
+                aria-label="行を追加"
+                title="行を追加"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
       {warningFacts.length ? (
         <div className="listing-warning-list">
           {warningFacts.map((fact) => (

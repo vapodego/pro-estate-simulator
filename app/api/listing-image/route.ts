@@ -49,6 +49,14 @@ type ListingPreview = {
   infoRegisteredDate: string | null;
   notes: string | null;
   imageUrl: string | null;
+  layoutDetails: LayoutDetail[];
+};
+
+type LayoutDetail = {
+  layout: string;
+  floor: string;
+  monthlyRentYen: number | null;
+  areaSqm: number | null;
 };
 
 const GEMINI_MODEL = "gemini-3-flash-preview";
@@ -70,6 +78,89 @@ const extractJson = (text: string) => {
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   return text.slice(start, end + 1);
+};
+
+const normalizeLayoutDetails = (value: unknown): LayoutDetail[] => {
+  if (!Array.isArray(value)) return [];
+  const rows = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const raw = item as Partial<Record<keyof LayoutDetail, unknown>>;
+      const layout = typeof raw.layout === "string" ? raw.layout.trim() : "";
+      if (!layout) return null;
+      return {
+        layout,
+        floor: typeof raw.floor === "string" ? raw.floor.trim() : "",
+        monthlyRentYen:
+          typeof raw.monthlyRentYen === "number" && Number.isFinite(raw.monthlyRentYen)
+            ? Math.round(raw.monthlyRentYen)
+            : null,
+        areaSqm:
+          typeof raw.areaSqm === "number" && Number.isFinite(raw.areaSqm)
+            ? Math.round(raw.areaSqm * 100) / 100
+            : null,
+      };
+    })
+    .filter((item): item is LayoutDetail => item !== null);
+  const deduped: LayoutDetail[] = [];
+  const seen = new Set<string>();
+  rows.forEach((row) => {
+    const key = `${row.layout}::${row.floor}::${row.monthlyRentYen ?? "na"}::${row.areaSqm ?? "na"}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(row);
+  });
+  return deduped.slice(0, 20);
+};
+
+const extractLayoutTokens = (value: string | null | undefined): string[] => {
+  if (!value) return [];
+  const normalized = value
+    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, "");
+  const matches = Array.from(
+    normalized.matchAll(/(ワンルーム|[1-9][0-9]?S?LDK|[1-9][0-9]?SDK|[1-9][0-9]?LDK|[1-9][0-9]?DK|[1-9][0-9]?K|[1-9][0-9]?R)/g)
+  ).map((match) => (match[1] === "ワンルーム" ? "1R" : match[1]));
+  if (matches.length > 0) {
+    return Array.from(new Set(matches));
+  }
+  const roughSplit = value
+    .split(/[、,\/・\s]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return Array.from(new Set(roughSplit)).slice(0, 10);
+};
+
+const buildFallbackLayoutDetails = (params: {
+  layout: string | null;
+  monthlyRentYen: number | null;
+  unitCount: number | null;
+  floorAreaSqm: number | null;
+}): LayoutDetail[] => {
+  const tokens = extractLayoutTokens(params.layout);
+  if (!tokens.length) return [];
+  const safeUnits =
+    typeof params.unitCount === "number" && Number.isFinite(params.unitCount) && params.unitCount > 0
+      ? params.unitCount
+      : null;
+  const perUnitRent =
+    typeof params.monthlyRentYen === "number" && Number.isFinite(params.monthlyRentYen)
+      ? safeUnits && safeUnits > 1
+        ? Math.round(params.monthlyRentYen / safeUnits)
+        : Math.round(params.monthlyRentYen)
+      : null;
+  const perUnitArea =
+    typeof params.floorAreaSqm === "number" && Number.isFinite(params.floorAreaSqm)
+      ? safeUnits && safeUnits > 1
+        ? Math.round((params.floorAreaSqm / safeUnits) * 100) / 100
+        : Math.round(params.floorAreaSqm * 100) / 100
+      : null;
+  return tokens.map((layout) => ({
+    layout,
+    floor: "",
+    monthlyRentYen: perUnitRent,
+    areaSqm: perUnitArea,
+  }));
 };
 
 const toBase64 = async (file: File) => {
@@ -148,7 +239,10 @@ export async function POST(request: Request) {
     "nextUpdateDate": { "value": string|null, "source": "...", "note": string? },
     "infoRegisteredDate": { "value": string|null, "source": "...", "note": string? },
     "notes": { "value": string|null, "source": "...", "note": string? }
-  }
+  },
+  "layoutDetails": [
+    { "layout": string, "floor": string|null, "monthlyRentYen": number|null, "areaSqm": number|null }
+  ]
 }
 
 【判断ルール】
@@ -164,6 +258,9 @@ export async function POST(request: Request) {
 - 築年月は「YYYY年MM月」などの表記をそのまま入れる
 - 交通（最寄り駅・徒歩分数）は1行で簡潔にまとめる
 - 文字列項目は可能な限り画像の表記を忠実に抽出する
+- layoutDetailsは「間取りごとの階・家賃・専有面積」が判読できる場合のみ行を作成（家賃は円/月）。
+- 間取りは 1R, 1K, 1DK, 1LDK, 2LDK などで統一。判別不能な値は入れない。
+- 階は「1階」「2F」「B1」など原文に沿って簡潔に記載。判読できない場合は null。
         `.trim(),
       },
     ];
@@ -212,9 +309,9 @@ export async function POST(request: Request) {
         { status: 502 }
       );
     }
-    let parsed: { fields?: Record<string, ImportField> };
+    let parsed: { fields?: Record<string, ImportField>; layoutDetails?: unknown };
     try {
-      parsed = JSON.parse(jsonText) as { fields?: Record<string, ImportField> };
+      parsed = JSON.parse(jsonText) as { fields?: Record<string, ImportField>; layoutDetails?: unknown };
     } catch {
       return NextResponse.json(
         {
@@ -261,6 +358,19 @@ export async function POST(request: Request) {
     const nextUpdateDateValue = parsed.fields?.nextUpdateDate?.value;
     const infoRegisteredDateValue = parsed.fields?.infoRegisteredDate?.value;
     const notesValue = parsed.fields?.notes?.value;
+    const parsedLayoutDetails = normalizeLayoutDetails(parsed.layoutDetails);
+    const fallbackLayoutDetails = buildFallbackLayoutDetails({
+      layout: typeof layoutValue === "string" ? layoutValue : null,
+      monthlyRentYen: typeof monthlyRentValue === "number" ? monthlyRentValue : null,
+      unitCount:
+        typeof unitCountValue === "number"
+          ? unitCountValue
+          : typeof totalUnitsValue === "number"
+            ? totalUnitsValue
+            : null,
+      floorAreaSqm: typeof floorAreaValue === "number" ? floorAreaValue : null,
+    });
+    const layoutDetails = parsedLayoutDetails.length > 0 ? parsedLayoutDetails : fallbackLayoutDetails;
 
     const listing: ListingPreview = {
       title:
@@ -314,6 +424,7 @@ export async function POST(request: Request) {
         typeof infoRegisteredDateValue === "string" ? infoRegisteredDateValue : null,
       notes: typeof notesValue === "string" ? notesValue : null,
       imageUrl: null,
+      layoutDetails,
     };
 
     return NextResponse.json({ fields: parsed.fields ?? {}, listing });
