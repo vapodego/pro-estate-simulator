@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 const displayFont = Space_Grotesk({
@@ -20,9 +21,18 @@ const monoFont = IBM_Plex_Mono({
   weight: ["400", "500"],
 });
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Pro Estate Simulator",
   description: "Real estate investment simulation",
+  icons: {
+    icon: [
+      {
+        url: "/favicon-pro-estate-simulator.png?v=20260402-1",
+        type: "image/png",
+      },
+    ],
+    shortcut: ["/favicon-pro-estate-simulator.png?v=20260402-1"],
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

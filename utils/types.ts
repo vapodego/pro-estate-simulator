@@ -1,5 +1,6 @@
 // 物件構造の定義 [cite: 645-648]
 export type StructureType = 'RC' | 'SRC' | 'S_HEAVY' | 'S_LIGHT' | 'WOOD';
+export type InvestmentMode = 'EXISTING_ASSET' | 'NEW_DEVELOPMENT';
 
 // 構造ごとの法定耐用年数マスターデータ [cite: 646-648]
 export const LEGAL_USEFUL_LIFE: Record<StructureType, number> = {
@@ -52,6 +53,7 @@ export interface OerEventItem {
 
 // 入力データの型定義
 export interface PropertyInput {
+  investmentMode: InvestmentMode; // 既存収益 / 新築開発
   price: number;              // 物件価格（本体: 建物+土地）
   buildingRatio: number;      // 建物比率（%）
   miscCostRate: number;       // 諸費用率（%）
@@ -64,6 +66,14 @@ export interface PropertyInput {
   newBuildTaxReductionRate: number; // 新築軽減率（建物課税標準の%）
   structure: StructureType;   // 構造
   buildingAge: number;        // 築年数
+  developmentLandPrice: number; // 開発: 土地代
+  developmentConstructionCost: number; // 開発: 本体工事費
+  developmentSoftCost: number; // 開発: 設計監理・申請等
+  developmentOtherCost: number; // 開発: 造成・解体・地盤等
+  developmentContingencyRate: number; // 開発: 予備費率（%）
+  developmentConstructionMonths: number; // 開発: 工期（月）
+  developmentLeaseUpMonths: number; // 開発: リーシング立上げ（月）
+  developmentInterestOnlyMonths: number; // 開発: 元本据置期間（月）
   
   // 【重要機能】設備分離設定 [cite: 667]
   enableEquipmentSplit: boolean; // 設備分離をするか

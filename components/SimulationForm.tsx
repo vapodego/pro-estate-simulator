@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  InvestmentMode,
   PropertyInput,
   StructureType,
   LEGAL_USEFUL_LIFE,
@@ -13,6 +14,11 @@ import {
   OerPropertyType,
 } from "../utils/types";
 import { getSuggestedBuildingRatio } from "../utils/estimates";
+import {
+  getDevelopmentCostSummary,
+  isDevelopmentMode,
+  syncDevelopmentDerivedInput,
+} from "../utils/development";
 import { OER_AGE_BANDS, getOerRateForAge } from "../utils/oer";
 import { getOccupancyRateForAge } from "../utils/occupancy";
 
@@ -57,6 +63,11 @@ type InputHelp = {
 const DEFAULT_INPUT_HELP = "シミュレーションに使う入力項目です。";
 
 const INPUT_HELP: Record<string, InputHelp> = {
+  investmentMode: {
+    title: "投資モード",
+    body:
+      "説明：既存収益物件か、新築開発案件かを切り替えます。\n結果への影響：新築開発では工期・リーシング期間・開発コストを使って、初期数年のCFが大きく変わります。\nコツ：土地から建てる案件は新築開発を選び、家賃は安定稼働時の満室想定で入れます。",
+  },
   price: {
     title: "物件価格（建物＋土地／万円）",
     body:
@@ -76,6 +87,46 @@ const INPUT_HELP: Record<string, InputHelp> = {
     title: "築年数（年）",
     body:
       "説明：建築からの経過年数です。\n結果への影響：融資期間、修繕費、空室リスク、家賃下落の前提に影響します。\nコツ：新築は0年、築浅でも大規模修繕履歴があれば別途「修繕イベント」で反映できます。",
+  },
+  developmentLandPrice: {
+    title: "土地代",
+    body:
+      "説明：土地取得に要する金額です。\n結果への影響：総事業費、土地比率、固定資産税評価の起点になります。\nコツ：仲介手数料や造成費を含めず、純粋な土地代として入れると後で比較しやすいです。",
+  },
+  developmentConstructionCost: {
+    title: "本体工事費",
+    body:
+      "説明：建物本体の工事費です。\n結果への影響：減価償却、工事期間中の資金需要、開発利回りに影響します。\nコツ：付帯工事や設計監理は別欄に分けると感度分析しやすくなります。",
+  },
+  developmentSoftCost: {
+    title: "設計・申請等",
+    body:
+      "説明：設計監理、確認申請、各種調査などのソフトコストです。\n結果への影響：総事業費に直結し、自己資金必要額にも効きます。\nコツ：本体工事費の一定割合で置く場合でも、実案件では別途見積もりに置き換えるのがおすすめです。",
+  },
+  developmentOtherCost: {
+    title: "造成・解体等",
+    body:
+      "説明：解体、造成、地盤改良、外構などの付帯工事費です。\n結果への影響：総事業費のぶれやすい部分で、CF安全性に効きます。\nコツ：不確定要素が多い場合は少し保守的に見積もると安全です。",
+  },
+  developmentContingencyRate: {
+    title: "予備費率",
+    body:
+      "説明：本体工事費・ソフトコスト・その他費用に対する予備費の率です。\n結果への影響：総事業費と必要自己資金を押し上げます。\nコツ：初期検討では3〜10%程度で置き、確度が上がるほど絞る運用が一般的です。",
+  },
+  developmentConstructionMonths: {
+    title: "工期（月）",
+    body:
+      "説明：着工から竣工までの月数です。\n結果への影響：収入が立ち始める時期、建築中金利、初期数年のCFに影響します。\nコツ：確認申請や引渡しまでのバッファも意識して置くと安全です。",
+  },
+  developmentLeaseUpMonths: {
+    title: "リーシング立上げ（月）",
+    body:
+      "説明：竣工後に安定稼働へ到達するまでの月数です。\n結果への影響：年1〜年2の賃料収入とCFに影響します。\nコツ：ファミリーより単身の方が早いこともありますが、供給競合が多いエリアは長めに置くと安全です。",
+  },
+  developmentInterestOnlyMonths: {
+    title: "元本据置（月）",
+    body:
+      "説明：建築期間中から安定稼働まで、元本返済を据え置く月数です。\n結果への影響：初年度CFとDSCRに大きく影響します。\nコツ：工期＋リーシング月数を基本に、融資条件に合わせて設定してください。",
   },
   grossYield: {
     title: "表面利回り（%）",
@@ -407,6 +458,8 @@ export const SimulationForm: React.FC<Props> = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const isBlankInput = (data: PropertyInput) =>
+    data.developmentLandPrice === 0 &&
+    data.developmentConstructionCost === 0 &&
     data.price === 0 &&
     data.loanAmount === 0 &&
     data.monthlyRent === 0 &&
@@ -495,6 +548,54 @@ export const SimulationForm: React.FC<Props> = ({
   const oerAgeBand = useMemo(
     () => inferOerAgeBand(formData.buildingAge),
     [formData.buildingAge]
+  );
+  const investmentModeValue: InvestmentMode =
+    formData.investmentMode === "NEW_DEVELOPMENT"
+      ? "NEW_DEVELOPMENT"
+      : initialData.investmentMode === "NEW_DEVELOPMENT"
+        ? "NEW_DEVELOPMENT"
+        : "EXISTING_ASSET";
+  const developmentLandPriceValue = Number.isFinite(formData.developmentLandPrice)
+    ? formData.developmentLandPrice
+    : initialData.developmentLandPrice ?? 0;
+  const developmentConstructionCostValue = Number.isFinite(formData.developmentConstructionCost)
+    ? formData.developmentConstructionCost
+    : initialData.developmentConstructionCost ?? 0;
+  const developmentSoftCostValue = Number.isFinite(formData.developmentSoftCost)
+    ? formData.developmentSoftCost
+    : initialData.developmentSoftCost ?? 0;
+  const developmentOtherCostValue = Number.isFinite(formData.developmentOtherCost)
+    ? formData.developmentOtherCost
+    : initialData.developmentOtherCost ?? 0;
+  const developmentContingencyRateValue = Number.isFinite(formData.developmentContingencyRate)
+    ? formData.developmentContingencyRate
+    : initialData.developmentContingencyRate ?? 5;
+  const developmentConstructionMonthsValue = Number.isFinite(formData.developmentConstructionMonths)
+    ? formData.developmentConstructionMonths
+    : initialData.developmentConstructionMonths ?? 12;
+  const developmentLeaseUpMonthsValue = Number.isFinite(formData.developmentLeaseUpMonths)
+    ? formData.developmentLeaseUpMonths
+    : initialData.developmentLeaseUpMonths ?? 6;
+  const developmentInterestOnlyMonthsValue = Number.isFinite(formData.developmentInterestOnlyMonths)
+    ? formData.developmentInterestOnlyMonths
+    : initialData.developmentInterestOnlyMonths ??
+      ((initialData.developmentConstructionMonths ?? 12) + (initialData.developmentLeaseUpMonths ?? 6));
+  const developmentSummary = useMemo(
+    () =>
+      getDevelopmentCostSummary({
+        developmentLandPrice: developmentLandPriceValue,
+        developmentConstructionCost: developmentConstructionCostValue,
+        developmentSoftCost: developmentSoftCostValue,
+        developmentOtherCost: developmentOtherCostValue,
+        developmentContingencyRate: developmentContingencyRateValue,
+      }),
+    [
+      developmentContingencyRateValue,
+      developmentConstructionCostValue,
+      developmentLandPriceValue,
+      developmentOtherCostValue,
+      developmentSoftCostValue,
+    ]
   );
   const legalLife = LEGAL_USEFUL_LIFE[formData.structure];
   const miscCostRate = Number.isFinite(formData.miscCostRate)
@@ -668,8 +769,10 @@ export const SimulationForm: React.FC<Props> = ({
   );
   const estimatedTotal = formData.price + initialCostsTotal;
   const annualFullRent = formData.monthlyRent * 12;
+  const grossYieldBasis =
+    investmentModeValue === "NEW_DEVELOPMENT" ? estimatedTotal : formData.price;
   const grossYieldValue =
-    formData.price > 0 ? Number(((annualFullRent / formData.price) * 100).toFixed(2)) : 0;
+    grossYieldBasis > 0 ? Number(((annualFullRent / grossYieldBasis) * 100).toFixed(2)) : 0;
   const oerBaseExact = getOerRateForAge(oerPropertyType, formData.buildingAge);
   const repairEvents = Array.isArray(formData.repairEvents)
     ? formData.repairEvents
@@ -764,25 +867,46 @@ export const SimulationForm: React.FC<Props> = ({
   ]);
 
   useEffect(() => {
-    const nextPristine = isBlankInput(initialData);
+    const normalizedInitial = isDevelopmentMode(initialData)
+      ? syncDevelopmentDerivedInput(initialData)
+      : initialData;
+    const nextPristine = isBlankInput(normalizedInitial);
     setIsPristine(nextPristine);
-    setBuildingRatioTouched(initialData.buildingRatio > 0);
+    setBuildingRatioTouched(normalizedInitial.buildingRatio > 0);
     if (nextPristine) {
       return;
     }
-    if (initialData.buildingRatio > 0) {
+    if (isDevelopmentMode(normalizedInitial)) {
+      setFormData(normalizedInitial);
+      onCalculate(normalizedInitial);
       return;
     }
-    const suggested = getSuggestedBuildingRatio(initialData.structure, initialData.buildingAge);
+    if (normalizedInitial.buildingRatio > 0) {
+      setFormData(normalizedInitial);
+      onCalculate(normalizedInitial);
+      return;
+    }
+    const suggested = getSuggestedBuildingRatio(
+      normalizedInitial.structure,
+      normalizedInitial.buildingAge
+    );
     if (suggested <= 0) {
+      setFormData(normalizedInitial);
+      onCalculate(normalizedInitial);
       return;
     }
-    const next = { ...initialData, buildingRatio: suggested };
+    const next = { ...normalizedInitial, buildingRatio: suggested };
     setFormData(next);
     onCalculate(next);
   }, [initialData, onCalculate]);
 
   useEffect(() => {
+    const investmentMode: InvestmentMode =
+      formData.investmentMode === "NEW_DEVELOPMENT"
+        ? "NEW_DEVELOPMENT"
+        : initialData.investmentMode === "NEW_DEVELOPMENT"
+          ? "NEW_DEVELOPMENT"
+          : "EXISTING_ASSET";
     const occupancyRate = Number.isFinite(formData.occupancyRate)
       ? formData.occupancyRate
       : initialData.occupancyRate ?? 100;
@@ -913,6 +1037,31 @@ export const SimulationForm: React.FC<Props> = ({
     const equipmentUsefulLife = Number.isFinite(formData.equipmentUsefulLife)
       ? formData.equipmentUsefulLife
       : initialData.equipmentUsefulLife ?? 15;
+    const developmentLandPrice = Number.isFinite(formData.developmentLandPrice)
+      ? formData.developmentLandPrice
+      : initialData.developmentLandPrice ?? 0;
+    const developmentConstructionCost = Number.isFinite(formData.developmentConstructionCost)
+      ? formData.developmentConstructionCost
+      : initialData.developmentConstructionCost ?? 0;
+    const developmentSoftCost = Number.isFinite(formData.developmentSoftCost)
+      ? formData.developmentSoftCost
+      : initialData.developmentSoftCost ?? 0;
+    const developmentOtherCost = Number.isFinite(formData.developmentOtherCost)
+      ? formData.developmentOtherCost
+      : initialData.developmentOtherCost ?? 0;
+    const developmentContingencyRate = Number.isFinite(formData.developmentContingencyRate)
+      ? formData.developmentContingencyRate
+      : initialData.developmentContingencyRate ?? 5;
+    const developmentConstructionMonths = Number.isFinite(formData.developmentConstructionMonths)
+      ? formData.developmentConstructionMonths
+      : initialData.developmentConstructionMonths ?? 12;
+    const developmentLeaseUpMonths = Number.isFinite(formData.developmentLeaseUpMonths)
+      ? formData.developmentLeaseUpMonths
+      : initialData.developmentLeaseUpMonths ?? 6;
+    const developmentInterestOnlyMonths = Number.isFinite(formData.developmentInterestOnlyMonths)
+      ? formData.developmentInterestOnlyMonths
+      : initialData.developmentInterestOnlyMonths ??
+        (developmentConstructionMonths + developmentLeaseUpMonths);
     const exitYear = Number.isFinite(formData.exitYear)
       ? formData.exitYear
       : initialData.exitYear ?? 10;
@@ -938,6 +1087,7 @@ export const SimulationForm: React.FC<Props> = ({
       ? formData.exitDiscountRate
       : initialData.exitDiscountRate ?? 4;
     if (
+      investmentMode === formData.investmentMode &&
       occupancyRate === formData.occupancyRate &&
       occupancyDetailEnabled === formData.occupancyDetailEnabled &&
       occupancyRateYear1to2 === formData.occupancyRateYear1to2 &&
@@ -981,6 +1131,14 @@ export const SimulationForm: React.FC<Props> = ({
       scenarioOccupancyStart === formData.scenarioOccupancyDeclineStartYear &&
       scenarioOccupancyDelta === formData.scenarioOccupancyDeclineDelta &&
       equipmentUsefulLife === formData.equipmentUsefulLife &&
+      developmentLandPrice === formData.developmentLandPrice &&
+      developmentConstructionCost === formData.developmentConstructionCost &&
+      developmentSoftCost === formData.developmentSoftCost &&
+      developmentOtherCost === formData.developmentOtherCost &&
+      developmentContingencyRate === formData.developmentContingencyRate &&
+      developmentConstructionMonths === formData.developmentConstructionMonths &&
+      developmentLeaseUpMonths === formData.developmentLeaseUpMonths &&
+      developmentInterestOnlyMonths === formData.developmentInterestOnlyMonths &&
       exitYear === formData.exitYear &&
       exitCapRate === formData.exitCapRate &&
       exitBrokerageRate === formData.exitBrokerageRate &&
@@ -992,8 +1150,9 @@ export const SimulationForm: React.FC<Props> = ({
     ) {
       return;
     }
-    const patched = {
+    const patchedBase: PropertyInput = {
       ...formData,
+      investmentMode,
       occupancyRate,
       occupancyDetailEnabled,
       occupancyRateYear1to2,
@@ -1037,6 +1196,14 @@ export const SimulationForm: React.FC<Props> = ({
       scenarioOccupancyDeclineStartYear: scenarioOccupancyStart,
       scenarioOccupancyDeclineDelta: scenarioOccupancyDelta,
       equipmentUsefulLife,
+      developmentLandPrice,
+      developmentConstructionCost,
+      developmentSoftCost,
+      developmentOtherCost,
+      developmentContingencyRate,
+      developmentConstructionMonths,
+      developmentLeaseUpMonths,
+      developmentInterestOnlyMonths,
       exitYear,
       exitCapRate,
       exitBrokerageRate,
@@ -1046,6 +1213,10 @@ export const SimulationForm: React.FC<Props> = ({
       exitLongTermTaxRate,
       exitDiscountRate,
     };
+    const patched =
+      investmentMode === "NEW_DEVELOPMENT"
+        ? syncDevelopmentDerivedInput(patchedBase)
+        : patchedBase;
     setFormData(patched);
     onCalculate(patched);
   }, [formData, initialData, onCalculate]);
@@ -1059,10 +1230,68 @@ export const SimulationForm: React.FC<Props> = ({
     onCalculate(newData);
   };
 
+  const handleInvestmentModeChange = (value: InvestmentMode) => {
+    const nextInterestOnlyMonths =
+      value === "NEW_DEVELOPMENT"
+        ? Math.max(
+            0,
+            Number.isFinite(formData.developmentInterestOnlyMonths)
+              ? formData.developmentInterestOnlyMonths
+              : developmentConstructionMonthsValue + developmentLeaseUpMonthsValue,
+          )
+        : formData.developmentInterestOnlyMonths;
+    const nextBase: PropertyInput = {
+      ...formData,
+      investmentMode: value,
+      developmentInterestOnlyMonths: nextInterestOnlyMonths,
+    };
+    const synced =
+      value === "NEW_DEVELOPMENT"
+        ? syncDevelopmentDerivedInput(nextBase)
+        : nextBase;
+    const nextLoanAmount = getLoanFromEquityRatio(
+      synced.price,
+      synced.equityRatio,
+      synced.loanCoverageMode,
+      synced
+    );
+    const next = { ...synced, loanAmount: nextLoanAmount };
+    setFormData(next);
+    setIsPristine(false);
+    onCalculate(next);
+  };
+
+  const handleDevelopmentFieldChange = (
+    key:
+      | "developmentLandPrice"
+      | "developmentConstructionCost"
+      | "developmentSoftCost"
+      | "developmentOtherCost"
+      | "developmentContingencyRate"
+      | "developmentConstructionMonths"
+      | "developmentLeaseUpMonths"
+      | "developmentInterestOnlyMonths",
+    value: number
+  ) => {
+    const nextBase = { ...formData, [key]: value };
+    const synced = syncDevelopmentDerivedInput(nextBase);
+    const nextLoanAmount = getLoanFromEquityRatio(
+      synced.price,
+      synced.equityRatio,
+      synced.loanCoverageMode,
+      synced
+    );
+    const next = { ...synced, loanAmount: nextLoanAmount };
+    setFormData(next);
+    setIsPristine(false);
+    onCalculate(next);
+  };
+
   const getLoanFromEquityRatio = (
     price: number,
     equityRatio: number,
-    loanCoverageMode: LoanCoverageMode = loanCoverageModeValue
+    loanCoverageMode: LoanCoverageMode = loanCoverageModeValue,
+    sourceData: PropertyInput = formData
   ) => {
     const safePrice = Number.isFinite(price) ? price : 0;
     const safeRatio = Number.isFinite(equityRatio) ? Math.max(0, Math.min(100, equityRatio)) : 0;
@@ -1071,16 +1300,24 @@ export const SimulationForm: React.FC<Props> = ({
     if (loanCoverageMode === "PRICE_ONLY") {
       return Math.max(0, Math.round(safePrice * financingRatio));
     }
-    const safeBuildingRatio = Number.isFinite(formData.buildingRatio)
-      ? Math.max(0, Math.min(100, formData.buildingRatio))
+    const safeBuildingRatio = Number.isFinite(sourceData.buildingRatio)
+      ? Math.max(0, Math.min(100, sourceData.buildingRatio))
       : 0;
-    const safeMiscRate = Number.isFinite(miscCostRate) ? Math.max(0, miscCostRate) : 0;
-    const safeWaterRate = Number.isFinite(waterContributionRate) ? Math.max(0, waterContributionRate) : 0;
-    const safeFireRate = Number.isFinite(fireInsuranceRate) ? Math.max(0, fireInsuranceRate) : 0;
-    const safeRegistrationRate = Number.isFinite(registrationCostRate)
-      ? Math.max(0, registrationCostRate)
+    const safeMiscRate = Number.isFinite(sourceData.miscCostRate)
+      ? Math.max(0, sourceData.miscCostRate)
       : 0;
-    const safeLoanFeeRate = Number.isFinite(loanFeeRate) ? Math.max(0, loanFeeRate) : 0;
+    const safeWaterRate = Number.isFinite(sourceData.waterContributionRate)
+      ? Math.max(0, sourceData.waterContributionRate)
+      : 0;
+    const safeFireRate = Number.isFinite(sourceData.fireInsuranceRate)
+      ? Math.max(0, sourceData.fireInsuranceRate)
+      : 0;
+    const safeRegistrationRate = Number.isFinite(sourceData.registrationCostRate)
+      ? Math.max(0, sourceData.registrationCostRate)
+      : 0;
+    const safeLoanFeeRate = Number.isFinite(sourceData.loanFeeRate)
+      ? Math.max(0, sourceData.loanFeeRate)
+      : 0;
     const buildingPrice = safePrice * (safeBuildingRatio / 100);
     const fixedInitialCosts =
       safePrice * (safeMiscRate / 100) +
@@ -1541,31 +1778,214 @@ export const SimulationForm: React.FC<Props> = ({
                 </div>
                 {openPanels.basic ? (
                   <>
-                    <div className="form-grid two-col oer-top-grid">
+                    <div className="form-grid one-col compact">
                       <div>
-                        {renderLabel("物件価格 (建物+土地/万円)", "price")}
-                        <input
-                          type="number"
-                          value={displayValue(formData.price, 10000)} // 表示は万円単位
-                          onChange={(e) => handlePriceChange(Number(e.target.value) * 10000)}
-                        />
-                      </div>
-                      <div>
-                        {renderLabel("建物比率 (%)", "buildingRatio")}
-                        <input
-                          type="number"
-                          value={displayPercent(formData.buildingRatio)}
-                          className={isAutoFilled("buildingRatio") ? "auto-input" : undefined}
-                          onChange={(e) => handleBuildingRatioChange(Number(e.target.value))}
-                        />
-                        {!isPristine && formData.price > 0 && formData.buildingRatio > 0 ? (
-                          <p className="form-note">
-                            建物価格:{" "}
-                            {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
-                          </p>
-                        ) : null}
+                        {renderHelpLabel("投資モード", "investmentMode")}
+                        <div className="form-grid two-col">
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="investmentMode"
+                              value="EXISTING_ASSET"
+                              checked={investmentModeValue === "EXISTING_ASSET"}
+                              onChange={() => handleInvestmentModeChange("EXISTING_ASSET")}
+                            />
+                            <span>既存収益</span>
+                          </label>
+                          <label className="inline-label">
+                            <input
+                              type="radio"
+                              name="investmentMode"
+                              value="NEW_DEVELOPMENT"
+                              checked={investmentModeValue === "NEW_DEVELOPMENT"}
+                              onChange={() => handleInvestmentModeChange("NEW_DEVELOPMENT")}
+                            />
+                            <span>新築開発</span>
+                          </label>
+                        </div>
+                        <p className="form-note">
+                          {investmentModeValue === "NEW_DEVELOPMENT"
+                            ? "土地取得から竣工・リーシング立上げまでを含む開発CFとして試算します。"
+                            : "購入済みの既存収益物件として試算します。"}
+                        </p>
                       </div>
                     </div>
+
+                    {investmentModeValue === "NEW_DEVELOPMENT" ? (
+                      <>
+                        <div className="form-grid two-col oer-top-grid">
+                          <div>
+                            {renderHelpLabel("土地代 (万円)", "developmentLandPrice")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentLandPriceValue, 10000)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentLandPrice",
+                                  Number(e.target.value) * 10000
+                                )
+                              }
+                            />
+                          </div>
+                          <div>
+                            {renderHelpLabel("本体工事費 (万円)", "developmentConstructionCost")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentConstructionCostValue, 10000)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentConstructionCost",
+                                  Number(e.target.value) * 10000
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="form-grid two-col oer-top-grid">
+                          <div>
+                            {renderHelpLabel("設計・申請等 (万円)", "developmentSoftCost")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentSoftCostValue, 10000)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentSoftCost",
+                                  Number(e.target.value) * 10000
+                                )
+                              }
+                            />
+                          </div>
+                          <div>
+                            {renderHelpLabel("造成・解体等 (万円)", "developmentOtherCost")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentOtherCostValue, 10000)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentOtherCost",
+                                  Number(e.target.value) * 10000
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="form-grid three-col compact">
+                          <div>
+                            {renderHelpLabel("予備費率 (%)", "developmentContingencyRate")}
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={displayPercent(developmentContingencyRateValue)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentContingencyRate",
+                                  Number(e.target.value)
+                                )
+                              }
+                            />
+                            <p className="form-note">
+                              {(
+                                developmentSummary.contingencyCost / 10000
+                              ).toLocaleString()}{" "}
+                              万円
+                            </p>
+                          </div>
+                          <div>
+                            {renderHelpLabel("工期（月）", "developmentConstructionMonths")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentConstructionMonthsValue)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentConstructionMonths",
+                                  Number(e.target.value)
+                                )
+                              }
+                            />
+                          </div>
+                          <div>
+                            {renderHelpLabel("リーシング立上げ（月）", "developmentLeaseUpMonths")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentLeaseUpMonthsValue)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentLeaseUpMonths",
+                                  Number(e.target.value)
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div className="form-grid three-col compact">
+                          <div>
+                            {renderHelpLabel("元本据置（月）", "developmentInterestOnlyMonths")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentInterestOnlyMonthsValue)}
+                              onChange={(e) =>
+                                handleDevelopmentFieldChange(
+                                  "developmentInterestOnlyMonths",
+                                  Number(e.target.value)
+                                )
+                              }
+                            />
+                          </div>
+                          <div>
+                            {renderHelpLabel("ハードコスト合計 (万円)", "price")}
+                            <input
+                              type="number"
+                              value={displayValue(developmentSummary.hardCostTotal, 10000)}
+                              readOnly
+                            />
+                            <p className="form-note">土地代 + 本体工事費</p>
+                          </div>
+                          <div>
+                            {renderHelpLabel("開発付帯費合計 (万円)", "miscCostRate")}
+                            <input
+                              type="number"
+                              value={displayValue(
+                                developmentSummary.softCost +
+                                  developmentSummary.otherCost +
+                                  developmentSummary.contingencyCost,
+                                10000
+                              )}
+                              readOnly
+                            />
+                            <p className="form-note">設計・造成・予備費の合計</p>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="form-grid two-col oer-top-grid">
+                        <div>
+                          {renderLabel("物件価格 (建物+土地/万円)", "price")}
+                          <input
+                            type="number"
+                            value={displayValue(formData.price, 10000)}
+                            onChange={(e) => handlePriceChange(Number(e.target.value) * 10000)}
+                          />
+                        </div>
+                        <div>
+                          {renderLabel("建物比率 (%)", "buildingRatio")}
+                          <input
+                            type="number"
+                            value={displayPercent(formData.buildingRatio)}
+                            className={isAutoFilled("buildingRatio") ? "auto-input" : undefined}
+                            onChange={(e) => handleBuildingRatioChange(Number(e.target.value))}
+                          />
+                          {!isPristine && formData.price > 0 && formData.buildingRatio > 0 ? (
+                            <p className="form-note">
+                              建物価格:{" "}
+                              {((formData.price * formData.buildingRatio) / 100 / 10000).toLocaleString()} 万円
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="form-grid two-col oer-top-grid">
                       <div>
@@ -1592,12 +2012,22 @@ export const SimulationForm: React.FC<Props> = ({
                         ) : null}
                       </div>
                       <div>
-                        {renderLabel("築年数 (年)", "buildingAge")}
-                        <input
-                          type="number"
-                          value={displayValue(formData.buildingAge)}
-                          onChange={(e) => handleBuildingAgeChange(Number(e.target.value))}
-                        />
+                        {investmentModeValue === "NEW_DEVELOPMENT" ? (
+                          <>
+                            {renderHelpLabel("築年数 (年)", "buildingAge")}
+                            <input type="number" value={0} readOnly />
+                            <p className="form-note">新築開発モードでは 0 年固定です。</p>
+                          </>
+                        ) : (
+                          <>
+                            {renderLabel("築年数 (年)", "buildingAge")}
+                            <input
+                              type="number"
+                              value={displayValue(formData.buildingAge)}
+                              onChange={(e) => handleBuildingAgeChange(Number(e.target.value))}
+                            />
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -1610,7 +2040,11 @@ export const SimulationForm: React.FC<Props> = ({
                           value={displayPercent(grossYieldValue)}
                           readOnly
                         />
-                        <p className="form-note">価格・家賃に連動して自動更新</p>
+                        <p className="form-note">
+                          {investmentModeValue === "NEW_DEVELOPMENT"
+                            ? "安定稼働後の賃料とハードコストをもとに概算表示"
+                            : "価格・家賃に連動して自動更新"}
+                        </p>
                       </div>
                       <div>
                         <label className="input-label">
@@ -1672,6 +2106,11 @@ export const SimulationForm: React.FC<Props> = ({
                             ? "初期費用（融資手数料を含む概算）も借入対象に含めて計算"
                             : "借入対象は物件価格のみで計算"}
                         </p>
+                        {investmentModeValue === "NEW_DEVELOPMENT" ? (
+                          <p className="form-note">
+                            開発モードでは、上部で入力した土地代・工事費・開発付帯費を総事業費に反映します。
+                          </p>
+                        ) : null}
                       </div>
                       <div>
                         {renderLabel("自己資金 (%)", "equityRatio")}
@@ -1724,7 +2163,12 @@ export const SimulationForm: React.FC<Props> = ({
                     <div className="form-subtitle">収支</div>
                     <div className="form-grid one-col compact">
                       <div>
-                        {renderLabel("月額賃料 (満室想定/万円)", "monthlyRent")}
+                        {renderLabel(
+                          investmentModeValue === "NEW_DEVELOPMENT"
+                            ? "月額賃料 (安定稼働時/万円)"
+                            : "月額賃料 (満室想定/万円)",
+                          "monthlyRent"
+                        )}
                         <input
                           type="number"
                           value={displayValue(formData.monthlyRent, 10000)}
@@ -2614,6 +3058,12 @@ export const SimulationForm: React.FC<Props> = ({
               </div>
               {openPanels.initial ? (
                 <>
+                  {investmentModeValue === "NEW_DEVELOPMENT" ? (
+                    <p className="form-note">
+                      新築開発モードでは「その他諸費用」は上部の開発コストから自動反映しています。
+                      水道・火災保険・登記・融資手数料のみここで上乗せできます。
+                    </p>
+                  ) : null}
                   <div className="form-grid three-col compact">
                     <div>
                       {renderLabel("水道分担金率 (%)", "waterContributionRate")}
@@ -2670,16 +3120,28 @@ export const SimulationForm: React.FC<Props> = ({
                       ) : null}
                     </div>
                     <div>
-                      {renderLabel("その他諸費用率 (%)", "miscCostRate")}
+                      {investmentModeValue === "NEW_DEVELOPMENT"
+                        ? renderHelpLabel("開発付帯費率 (%)", "miscCostRate")
+                        : renderLabel("その他諸費用率 (%)", "miscCostRate")}
                       <input
                         type="number"
                         step="0.1"
                         value={displayPercent(miscCostRate)}
                         className={isAutoFilled("miscCostRate") ? "auto-input" : undefined}
-                        onChange={(e) => handleChange("miscCostRate", Number(e.target.value))}
+                        readOnly={investmentModeValue === "NEW_DEVELOPMENT"}
+                        onChange={(e) =>
+                          investmentModeValue === "NEW_DEVELOPMENT"
+                            ? undefined
+                            : handleChange("miscCostRate", Number(e.target.value))
+                        }
                       />
                       {!isPristine && miscCost > 0 ? (
-                        <p className="form-note">{(miscCost / 10000).toLocaleString()} 万円</p>
+                        <p className="form-note">
+                          {(miscCost / 10000).toLocaleString()} 万円
+                          {investmentModeValue === "NEW_DEVELOPMENT"
+                            ? "（設計・造成・予備費を反映）"
+                            : ""}
+                        </p>
                       ) : null}
                     </div>
                   </div>

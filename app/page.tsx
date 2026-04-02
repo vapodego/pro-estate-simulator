@@ -62,12 +62,20 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { auth, db, googleProvider } from "../utils/firebase";
+import { auth, db, googleProvider, isFirebaseConfigured } from "../utils/firebase";
 import { Building2, Calculator, Download, FileText, History, Save, UserCircle } from "lucide-react";
 import { applyEstimatedDefaultsWithMeta } from "../utils/estimates";
+import {
+  buildDealSimulationExportFilename,
+  buildDealWithSimulationRun,
+  parseDealForSimulation,
+  type DealDocument,
+  type DealImportSummary,
+} from "../utils/deal";
 
 // デフォルトの初期値（空の状態）
 const DEFAULT_INPUT: PropertyInput = {
+  investmentMode: "EXISTING_ASSET",
   price: 0,
   buildingRatio: 0,
   miscCostRate: 3,
@@ -80,6 +88,14 @@ const DEFAULT_INPUT: PropertyInput = {
   newBuildTaxReductionRate: 50,
   structure: "RC",
   buildingAge: 0,
+  developmentLandPrice: 0,
+  developmentConstructionCost: 0,
+  developmentSoftCost: 0,
+  developmentOtherCost: 0,
+  developmentContingencyRate: 5,
+  developmentConstructionMonths: 12,
+  developmentLeaseUpMonths: 6,
+  developmentInterestOnlyMonths: 18,
   enableEquipmentSplit: false,
   equipmentRatio: 0,
   equipmentUsefulLife: 0,
@@ -1201,14 +1217,35 @@ const TABLE_ROW_INFO: Record<string, TableRowInfo> = {
 const formatFirebaseError = (error: unknown, fallback: string) => {
   if (error && typeof error === "object" && "code" in error) {
     const { code, message } = error as FirebaseError;
+    if (code === "auth/unauthorized-domain") {
+      return (
+        "現在の開発URLは Firebase Authentication で許可されていません。" +
+        " Firebase コンソールの Authentication > Settings > Authorized domains に" +
+        " `localhost` を追加してください。"
+      );
+    }
+    if (code.startsWith("auth/requests-from-referer-")) {
+      return (
+        "現在の開発URLからの認証リクエストがブロックされています。" +
+        " Firebase Authentication の Authorized domains に `localhost` を追加し、" +
+        " Google Cloud の API キー制限を使っている場合は" +
+        " `http://localhost:3001/*` も許可してください。"
+      );
+    }
     return `${fallback} (${code}${message ? `: ${message}` : ""})`;
   }
   return fallback;
 };
 
+const FIREBASE_DISABLED_MESSAGE =
+  "Firebase の環境変数が未設定のため、Google ログイン・保存・履歴は無効です。";
+
 export default function Home() {
   const [inputData, setInputData] = useState<PropertyInput>(DEFAULT_INPUT);
   const [autoFilledKeys, setAutoFilledKeys] = useState<(keyof PropertyInput)[]>([]);
+  const [importedDealDraft, setImportedDealDraft] = useState<DealDocument | null>(null);
+  const [importedDealSummary, setImportedDealSummary] = useState<DealImportSummary | null>(null);
+  const [dealIntegrationFeedback, setDealIntegrationFeedback] = useState<string | null>(null);
   const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
   const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
   const [hasImportResult, setHasImportResult] = useState(false);
@@ -1259,6 +1296,7 @@ export default function Home() {
   const analysisRunIdRef = useRef<string | null>(null);
   const analysisRunUrlRef = useRef<string | null>(null);
   const ridershipLookupKeyRef = useRef<string>("");
+  const dealImportInputRef = useRef<HTMLInputElement | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const aiMessagesRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1285,6 +1323,12 @@ export default function Home() {
 
   const toggleSection = (key: keyof typeof openSections) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const clearDealIntegrationContext = () => {
+    setImportedDealDraft(null);
+    setImportedDealSummary(null);
+    setDealIntegrationFeedback(null);
   };
 
   const updateInvestmentInput = <K extends keyof InvestmentInput>(
@@ -3093,6 +3137,12 @@ export default function Home() {
     pushAuthDebug(
       `authDomain=${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "unknown"}`
     );
+    pushAuthDebug(`firebaseConfigured=${isFirebaseConfigured ? "yes" : "no"}`);
+    if (!auth) {
+      setAuthReady(true);
+      pushAuthDebug("firebase disabled");
+      return;
+    }
     pushAuthDebug(`authDomain(config)=${auth.app.options.authDomain ?? "unknown"}`);
     if (typeof navigator !== "undefined") {
       pushAuthDebug(`ua=${navigator.userAgent}`);
@@ -3106,7 +3156,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!authReady) return;
+    if (!authReady || !auth) return;
     pushAuthDebug("redirect result check");
     getRedirectResult(auth)
       .then((result) => {
@@ -3141,7 +3191,7 @@ export default function Home() {
   }, [accountOpen, saveOpen]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !db) {
       setSavedItems([]);
       return;
     }
@@ -3192,7 +3242,7 @@ export default function Home() {
   }, [user]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !db) {
       setAnalysisRuns([]);
       setHistoryError(null);
       return;
@@ -3249,6 +3299,10 @@ export default function Home() {
 
   const handleLogin = async () => {
     setAuthError(null);
+    if (!auth || !googleProvider) {
+      setAuthError(FIREBASE_DISABLED_MESSAGE);
+      return;
+    }
     try {
       pushAuthDebug("login start popup");
       await signInWithPopup(auth, googleProvider);
@@ -3281,6 +3335,10 @@ export default function Home() {
 
   const handleLogout = async () => {
     setAuthError(null);
+    if (!auth) {
+      setAuthError(FIREBASE_DISABLED_MESSAGE);
+      return;
+    }
     try {
       await signOut(auth);
     } catch (error) {
@@ -3289,6 +3347,10 @@ export default function Home() {
   };
 
   const handleSave = async () => {
+    if (!db) {
+      setAuthError(FIREBASE_DISABLED_MESSAGE);
+      return;
+    }
     if (!user) {
       setAuthError("保存にはログインが必要です。");
       return;
@@ -3315,6 +3377,7 @@ export default function Home() {
   };
 
   const handleLoad = (item: SavedSimulation) => {
+    clearDealIntegrationContext();
     setInputData({ ...DEFAULT_INPUT, ...item.input });
     setExtraInfo(normalizeExtraInfo(item.extraInfo));
     setAiMessages(item.aiMessages ?? []);
@@ -3352,12 +3415,67 @@ export default function Home() {
     setFormVersion((prev) => prev + 1);
   };
 
+  const handleDealImportChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file) return;
+
+    try {
+      const imported = parseDealForSimulation(await file.text());
+      const { data, autoFilled } = applyEstimatedDefaultsWithMeta({
+        ...DEFAULT_INPUT,
+        ...imported.patch,
+      });
+      const nextExtraInfo = createDefaultExtraInfo();
+
+      if (imported.summary.address) {
+        nextExtraInfo.locationChecklist.address = imported.summary.address;
+      }
+
+      setImportedDealDraft(imported.dealDraft);
+      setImportedDealSummary(imported.summary);
+      setDealIntegrationFeedback(
+        imported.summary.warnings.length > 0
+          ? `Deal ${imported.summary.dealId} を読み込みました。${imported.summary.warnings.join(" ")}`
+          : `Deal ${imported.summary.dealId} を読み込みました。Step 2 で前提を確認し、Step 3 で Deal に書き戻せます。`,
+      );
+      setInputData(data);
+      setAutoFilledKeys(autoFilled);
+      setSelectedImportId(null);
+      setHasImportResult(true);
+      setHasViewedResults(false);
+      setHasCompletedSteps(false);
+      setSelectedYear(1);
+      setExtraInfo(nextExtraInfo);
+      setAiMessages([]);
+      setAiError(null);
+      setAiCacheHit(false);
+      setPendingAiPromptId(null);
+      analysisRunIdRef.current = null;
+      analysisRunUrlRef.current = null;
+      setFormVersion((prev) => prev + 1);
+
+      if (imported.summary.address) {
+        void fetchLocationChecklistByAddress(imported.summary.address);
+      }
+    } catch (error) {
+      clearDealIntegrationContext();
+      setDealIntegrationFeedback(
+        error instanceof Error
+          ? error.message
+          : "Deal JSON の読み込みに失敗しました。",
+      );
+    }
+  };
+
   const handleImportApply = (payload: {
     patch: Partial<PropertyInput>;
     listing: ImportHistoryItem["listing"];
     url: string;
     cacheEnabled: boolean;
   }) => {
+    clearDealIntegrationContext();
     const merged = { ...inputData, ...payload.patch };
     const { data, autoFilled } = applyEstimatedDefaultsWithMeta(merged);
     setInputData(data);
@@ -3447,6 +3565,7 @@ export default function Home() {
   const handleImportSelect = (id: string) => {
     const item = importHistory.find((entry) => entry.id === id);
     if (!item) return;
+    clearDealIntegrationContext();
     setInputData({ ...DEFAULT_INPUT, ...item.input });
     setAutoFilledKeys(item.autoFilled);
     setSelectedImportId(id);
@@ -3526,7 +3645,7 @@ export default function Home() {
         url: selectedImport.url,
         listing: nextListing,
       });
-      if (analysisRunIdRef.current && analysisRunUrlRef.current === selectedImport.url) {
+      if (db && analysisRunIdRef.current && analysisRunUrlRef.current === selectedImport.url) {
         void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
           listing: nextListing,
           updatedAt: serverTimestamp(),
@@ -3538,6 +3657,7 @@ export default function Home() {
   };
 
   const handleAnalysisRunSelect = (run: AnalysisRunItem) => {
+    clearDealIntegrationContext();
     const nextInput = { ...DEFAULT_INPUT, ...(run.input ?? {}) };
     setInputData(nextInput);
     setExtraInfo(normalizeExtraInfo(run.extraInfo));
@@ -3580,6 +3700,7 @@ export default function Home() {
   };
 
   const handleImportClear = () => {
+    clearDealIntegrationContext();
     setImportHistory([]);
     setSelectedImportId(null);
     setHasViewedResults(false);
@@ -3587,6 +3708,7 @@ export default function Home() {
   };
 
   const handleImportStart = () => {
+    clearDealIntegrationContext();
     setInputData(DEFAULT_INPUT);
     setExtraInfo(createDefaultExtraInfo());
     setAutoFilledKeys([]);
@@ -3634,7 +3756,7 @@ export default function Home() {
   }, [filteredHistory, historyView]);
 
   const getCacheDocRef = (url: string) => {
-    if (!user) return null;
+    if (!user || !db) return null;
     const id = `${user.uid}_${hashUrl(normalizeUrl(url))}`;
     return doc(db, "analysisCache", id);
   };
@@ -3702,7 +3824,7 @@ export default function Home() {
     aiMessages: { role: "user" | "assistant"; content: string }[];
     extraInfo: ExtraInfoInput;
   }) => {
-    if (!user) return null;
+    if (!user || !db) return null;
     try {
       const ref = await addDoc(collection(db, "analysisRuns"), {
         userId: user.uid,
@@ -3832,7 +3954,7 @@ export default function Home() {
             aiMessages: finalMessages,
             extraInfo,
           });
-          if (analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
+          if (db && analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
             void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
               aiMessages: finalMessages,
               extraInfo,
@@ -3865,7 +3987,7 @@ export default function Home() {
         url: cacheUrl,
         extraInfo,
       });
-      if (analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
+      if (db && analysisRunIdRef.current && analysisRunUrlRef.current === cacheUrl) {
         void updateDoc(doc(db, "analysisRuns", analysisRunIdRef.current), {
           extraInfo,
           updatedAt: serverTimestamp(),
@@ -3989,21 +4111,27 @@ export default function Home() {
   const exitNetProceeds = inputData.exitEnabled
     ? Math.round(exitSalePrice - exitBrokerage - exitOtherCosts - exitTax - exitLoanBalance)
     : 0;
+  const isDevelopmentRun = inputData.investmentMode === "NEW_DEVELOPMENT";
   const exitCashFlows = inputData.exitEnabled
-    ? [
-        -equity,
-        ...results.slice(0, exitYear).map((result) => result.cashFlowPostTax),
-      ]
+    ? isDevelopmentRun
+      ? [...results.slice(0, exitYear).map((result) => result.cashFlowPostTax)]
+      : [-equity, ...results.slice(0, exitYear).map((result) => result.cashFlowPostTax)]
     : [];
-  if (inputData.exitEnabled && exitCashFlows.length > exitYear) {
-    exitCashFlows[exitYear] += exitNetProceeds;
+  if (inputData.exitEnabled && exitCashFlows.length > 0) {
+    if (isDevelopmentRun && exitCashFlows.length >= exitYear) {
+      exitCashFlows[exitYear - 1] += exitNetProceeds;
+    } else if (!isDevelopmentRun && exitCashFlows.length > exitYear) {
+      exitCashFlows[exitYear] += exitNetProceeds;
+    }
   }
   const exitIrr = inputData.exitEnabled ? calculateIRR(exitCashFlows) : null;
   const exitNpv = inputData.exitEnabled
     ? calculateNPV(inputData.exitDiscountRate / 100, exitCashFlows)
     : null;
   const baseEquityMultiple = inputData.exitEnabled && equity > 0
-    ? exitCashFlows.slice(1).reduce((sum, cashFlow) => sum + cashFlow, 0) / equity
+    ? (isDevelopmentRun
+        ? exitCashFlows.reduce((sum, cashFlow) => sum + cashFlow, 0)
+        : exitCashFlows.slice(1).reduce((sum, cashFlow) => sum + cashFlow, 0)) / equity
     : null;
 
   const aiSummary = useMemo(() => {
@@ -4060,6 +4188,7 @@ export default function Home() {
     }));
     return {
       input: {
+        investmentMode: inputData.investmentMode,
         price: inputData.price,
         loanAmount: inputData.loanAmount,
         interestRate: inputData.interestRate,
@@ -4124,12 +4253,15 @@ export default function Home() {
           const stressNetProceeds = Math.round(
             stressSalePrice - stressBrokerage - stressOtherCosts - stressTax - stressLoanBalance
           );
-          const stressCashFlows = [
-            -equity,
-            ...stressResults.slice(0, exitYear).map((result) => result.cashFlowPostTax),
-          ];
-          if (stressCashFlows.length > exitYear) {
-            stressCashFlows[exitYear] += stressNetProceeds;
+          const stressCashFlows = isDevelopmentRun
+            ? [...stressResults.slice(0, exitYear).map((result) => result.cashFlowPostTax)]
+            : [-equity, ...stressResults.slice(0, exitYear).map((result) => result.cashFlowPostTax)];
+          if (stressCashFlows.length > 0) {
+            if (isDevelopmentRun && stressCashFlows.length >= exitYear) {
+              stressCashFlows[exitYear - 1] += stressNetProceeds;
+            } else if (!isDevelopmentRun && stressCashFlows.length > exitYear) {
+              stressCashFlows[exitYear] += stressNetProceeds;
+            }
           }
           return {
             salePrice: stressSalePrice,
@@ -4138,7 +4270,10 @@ export default function Home() {
             npv: calculateNPV(inputData.exitDiscountRate / 100, stressCashFlows),
             equityMultiple:
               equity > 0
-                ? stressCashFlows.slice(1).reduce((sum, cashFlow) => sum + cashFlow, 0) / equity
+                ? (isDevelopmentRun
+                    ? stressCashFlows.reduce((sum, cashFlow) => sum + cashFlow, 0)
+                    : stressCashFlows.slice(1).reduce((sum, cashFlow) => sum + cashFlow, 0)) /
+                  equity
                 : null,
           };
         })()
@@ -4469,6 +4604,49 @@ export default function Home() {
     lifullRowFocusIndexes.rent,
     lifullRowFocusIndexes.walk,
   ]);
+
+  const handleExportDealSimulation = () => {
+    if (!importedDealDraft) {
+      return;
+    }
+
+    try {
+      const nextDeal = buildDealWithSimulationRun({
+        additionalInfoScore,
+        baseEquityMultiple,
+        baseSummary,
+        dealDraft: importedDealDraft,
+        exitIrr,
+        exitNpv,
+        exitSalePrice,
+        firstDeadCrossYear,
+        importedWarnings: importedDealSummary?.warnings ?? [],
+        input: inputData,
+        investmentScore,
+        results,
+        safetyScore,
+        totalProjectCost: totalPrice,
+      });
+      const href = URL.createObjectURL(
+        new Blob([`${JSON.stringify(nextDeal, null, 2)}\n`], {
+          type: "application/json;charset=utf-8",
+        })
+      );
+      const anchor = document.createElement("a");
+      const fileName = buildDealSimulationExportFilename(nextDeal);
+
+      anchor.href = href;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+      setDealIntegrationFeedback(`${fileName} をダウンロードしました。`);
+    } catch (error) {
+      console.warn("deal simulation export failed", error);
+      setDealIntegrationFeedback("Deal JSON の書き出しに失敗しました。");
+    }
+  };
 
   const handleExportSnapshot = () => {
     try {
@@ -5081,15 +5259,21 @@ ${JSON.stringify(machinePayload, null, 2)}
             <table className="breakdown-table">
               <tbody>
                 <tr>
-                  <td className="label">物件価格 (本体)</td>
+                  <td className="label">
+                    {isDevelopmentRun ? "ハードコスト合計" : "物件価格 (本体)"}
+                  </td>
                   <td className="value calc total">{formatYen(basePrice)}</td>
                 </tr>
                 <tr>
-                  <td className="label">建物価格 (概算)</td>
+                  <td className="label">
+                    {isDevelopmentRun ? "本体工事費" : "建物価格 (概算)"}
+                  </td>
                   <td className="value input">{formatYen(buildingPrice)}</td>
                 </tr>
                 <tr>
-                  <td className="label">土地価格 (概算)</td>
+                  <td className="label">
+                    {isDevelopmentRun ? "土地代" : "土地価格 (概算)"}
+                  </td>
                   <td className="value input">{formatYen(landPrice)}</td>
                 </tr>
                 <tr>
@@ -5102,7 +5286,11 @@ ${JSON.stringify(machinePayload, null, 2)}
                 </tr>
               </tbody>
             </table>
-            <div className="breakdown-foot">※建物比率と初期費用設定から自動算出</div>
+            <div className="breakdown-foot">
+              {isDevelopmentRun
+                ? "※新築開発モードでは、土地代・工事費・開発付帯費から自動算出"
+                : "※建物比率と初期費用設定から自動算出"}
+            </div>
           </>
         ) : null}
       </div>
@@ -5144,7 +5332,11 @@ ${JSON.stringify(machinePayload, null, 2)}
                   <td className="value calc">{formatYen(registrationCost)}</td>
                 </tr>
                 <tr>
-                  <td className="label">その他諸費用 ({inputData.miscCostRate}%)</td>
+                  <td className="label">
+                    {isDevelopmentRun
+                      ? `開発付帯費 (${inputData.miscCostRate}%)`
+                      : `その他諸費用 (${inputData.miscCostRate}%)`}
+                  </td>
                   <td className="value calc">{formatYen(miscCost)}</td>
                 </tr>
                 <tr>
@@ -6437,12 +6629,14 @@ ${JSON.stringify(machinePayload, null, 2)}
                           type="button"
                           className="section-toggle"
                           onClick={handleLogin}
-                          disabled={!authReady}
+                          disabled={!authReady || !isFirebaseConfigured}
                         >
                           Googleでログイン
                         </button>
                         <div className="form-note">
-                          ログインすると保存と読み込みが使えます。
+                          {isFirebaseConfigured
+                            ? "ログインすると保存と読み込みが使えます。"
+                            : FIREBASE_DISABLED_MESSAGE}
                         </div>
                       </>
                     )}
@@ -6461,6 +6655,14 @@ ${JSON.stringify(machinePayload, null, 2)}
 
       <div className="app-body">
         <div className="app-main">
+          <input
+            ref={dealImportInputRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={handleDealImportChange}
+            hidden
+          />
+
           <div className="step-bar">
             {[
               { id: 1, label: "URL入力" },
@@ -6480,6 +6682,70 @@ ${JSON.stringify(machinePayload, null, 2)}
               </div>
             ))}
           </div>
+
+          <section className="sheet">
+            <div className="sheet-card">
+              <div className="table-head">
+                <h2 className="table-title">Deal連携</h2>
+                <span className="breakdown-pill">
+                  {importedDealDraft ? "読込済み" : "任意"}
+                </span>
+              </div>
+              <div className="form-note">
+                land-screener と volume checker から出力した Deal JSON を読み込み、
+                この simulator の前提へ反映します。
+              </div>
+              {importedDealSummary ? (
+                <>
+                  <div className="form-note">
+                    {importedDealSummary.dealId} / {importedDealSummary.title} /{" "}
+                    {importedDealSummary.strategy === "new_development"
+                      ? "新築開発"
+                      : "既存収益"}{" "}
+                    / {importedDealSummary.source}
+                  </div>
+                  {importedDealSummary.address ? (
+                    <div className="form-note">{importedDealSummary.address}</div>
+                  ) : null}
+                </>
+              ) : null}
+              {dealIntegrationFeedback ? (
+                <div className="form-note">{dealIntegrationFeedback}</div>
+              ) : null}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="section-toggle"
+                  onClick={() => dealImportInputRef.current?.click()}
+                >
+                  Deal JSONを取込む
+                </button>
+                {importedDealDraft ? (
+                  <button
+                    type="button"
+                    className="section-toggle"
+                    onClick={() => {
+                      clearDealIntegrationContext();
+                      setDealIntegrationFeedback(
+                        "Deal 連携を解除しました。現在のシミュレーション入力値はそのまま保持しています。",
+                      );
+                    }}
+                  >
+                    Deal連携を解除
+                  </button>
+                ) : null}
+                {importedDealDraft ? (
+                  <button
+                    type="button"
+                    className="section-toggle"
+                    onClick={handleExportDealSimulation}
+                  >
+                    Deal JSONを書き出す
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </section>
 
           <div className="step-head">
             <span className="step-pill">Step 1</span>
@@ -6547,6 +6813,15 @@ ${JSON.stringify(machinePayload, null, 2)}
           <div className="input-section-head output-section-head">
             <span className="step-pill">Step 3</span>
             <span className="input-section-badge">シミュレーション結果</span>
+            {importedDealDraft ? (
+              <button
+                type="button"
+                className="section-toggle"
+                onClick={handleExportDealSimulation}
+              >
+                Deal JSONに書き戻す
+              </button>
+            ) : null}
           </div>
           <section className="sheet" ref={resultsRef}>
             <div className="sheet-grid">
