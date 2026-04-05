@@ -1,4 +1,10 @@
-import { LEGAL_USEFUL_LIFE, PropertyInput, StructureType, VacancyModelType } from "./types";
+import {
+  DevelopmentSiteConditionKey,
+  LEGAL_USEFUL_LIFE,
+  PropertyInput,
+  StructureType,
+  VacancyModelType,
+} from "./types";
 
 const BUILDING_RATIO_TABLE: Record<StructureType, { maxAge: number; ratio: number }[]> = {
   RC: [
@@ -65,6 +71,124 @@ const LOAN_DURATION_BONUS: Record<StructureType, number> = {
   WOOD: 15,
 };
 
+type DevelopmentAutoFillKey =
+  | "developmentSoftCost"
+  | "developmentOtherCost"
+  | "developmentContingencyRate"
+  | "developmentConstructionMonths"
+  | "developmentLeaseUpMonths"
+  | "developmentInterestOnlyMonths";
+
+type TokyoRcDevelopmentBand = {
+  baseConstructionMonths: number;
+  contingencyRatePercent: number;
+  maxConstructionCostJpy: number;
+  otherCostRatePercent: number;
+  softCostRatePercent: number;
+};
+
+type TokyoRcLeaseUpBand = {
+  leaseUpMonths: number;
+  maxUnitCount: number;
+};
+
+type TokyoRcSiteConditionRule = {
+  constructionMonthsAdd: number;
+  otherCostRatePercentAdd: number;
+};
+
+const TOKYO_RC_DEFAULT_CONSTRUCTION_COST_JPY = 350_000_000;
+const TOKYO_RC_DEFAULT_UNIT_COUNT = 24;
+const TOKYO_RC_INTEREST_ONLY_BUFFER_MONTHS = 2;
+const DEVELOPMENT_SITE_CONDITION_KEYS: DevelopmentSiteConditionKey[] = [
+  "siteConditionDemolition",
+  "siteConditionRetainingWall",
+  "siteConditionGroundImprovement",
+  "siteConditionBasement",
+  "siteConditionLogisticsConstraint",
+];
+
+const TOKYO_RC_DEVELOPMENT_BANDS: TokyoRcDevelopmentBand[] = [
+  {
+    maxConstructionCostJpy: 150_000_000,
+    softCostRatePercent: 8.0,
+    otherCostRatePercent: 3.5,
+    contingencyRatePercent: 6.0,
+    baseConstructionMonths: 9,
+  },
+  {
+    maxConstructionCostJpy: 300_000_000,
+    softCostRatePercent: 7.5,
+    otherCostRatePercent: 4.0,
+    contingencyRatePercent: 6.5,
+    baseConstructionMonths: 10,
+  },
+  {
+    maxConstructionCostJpy: 500_000_000,
+    softCostRatePercent: 7.0,
+    otherCostRatePercent: 4.5,
+    contingencyRatePercent: 7.0,
+    baseConstructionMonths: 12,
+  },
+  {
+    maxConstructionCostJpy: 800_000_000,
+    softCostRatePercent: 6.8,
+    otherCostRatePercent: 5.5,
+    contingencyRatePercent: 7.5,
+    baseConstructionMonths: 14,
+  },
+  {
+    maxConstructionCostJpy: Number.POSITIVE_INFINITY,
+    softCostRatePercent: 6.5,
+    otherCostRatePercent: 6.5,
+    contingencyRatePercent: 8.0,
+    baseConstructionMonths: 16,
+  },
+];
+
+const TOKYO_RC_LEASE_UP_BANDS: TokyoRcLeaseUpBand[] = [
+  { maxUnitCount: 12, leaseUpMonths: 4 },
+  { maxUnitCount: 24, leaseUpMonths: 5 },
+  { maxUnitCount: 40, leaseUpMonths: 6 },
+  { maxUnitCount: 60, leaseUpMonths: 7 },
+  { maxUnitCount: Number.POSITIVE_INFINITY, leaseUpMonths: 8 },
+];
+
+const TOKYO_RC_SITE_CONDITION_RULES: Record<
+  DevelopmentSiteConditionKey,
+  TokyoRcSiteConditionRule
+> = {
+  siteConditionDemolition: {
+    otherCostRatePercentAdd: 2.0,
+    constructionMonthsAdd: 1,
+  },
+  siteConditionRetainingWall: {
+    otherCostRatePercentAdd: 3.0,
+    constructionMonthsAdd: 1,
+  },
+  siteConditionGroundImprovement: {
+    otherCostRatePercentAdd: 2.5,
+    constructionMonthsAdd: 1,
+  },
+  siteConditionBasement: {
+    otherCostRatePercentAdd: 4.0,
+    constructionMonthsAdd: 2,
+  },
+  siteConditionLogisticsConstraint: {
+    otherCostRatePercentAdd: 1.5,
+    constructionMonthsAdd: 1,
+  },
+};
+
+const DEVELOPMENT_AUTO_FILL_KEYS: DevelopmentAutoFillKey[] = [
+  "developmentSoftCost",
+  "developmentOtherCost",
+  "developmentContingencyRate",
+  "developmentConstructionMonths",
+  "developmentLeaseUpMonths",
+  "developmentInterestOnlyMonths",
+];
+
 export const getSuggestedBuildingRatio = (structure: StructureType, age: number): number => {
   const safeAge = normalizeAge(age) ?? 0;
   const rows = BUILDING_RATIO_TABLE[structure];
@@ -117,131 +241,372 @@ export const getSuggestedOperatingExpenseRate = (
 const isMissingNumber = (value: number | null | undefined) =>
   !Number.isFinite(value) || (value as number) <= 0;
 
+const isTokyoRcDevelopmentScenario = (input: PropertyInput) =>
+  input.investmentMode === "NEW_DEVELOPMENT" &&
+  (input.structure === "RC" || input.structure === "SRC");
+
+export const getDevelopmentSiteConditionAdjustment = (
+  input: Pick<PropertyInput, DevelopmentSiteConditionKey>
+) => {
+  return DEVELOPMENT_SITE_CONDITION_KEYS.reduce(
+    (accumulator, key) => {
+      if (!input[key]) return accumulator;
+      const rule = TOKYO_RC_SITE_CONDITION_RULES[key];
+      return {
+        activeKeys: [...accumulator.activeKeys, key],
+        additionalConstructionMonths:
+          accumulator.additionalConstructionMonths + rule.constructionMonthsAdd,
+        additionalOtherCostRatePercent:
+          accumulator.additionalOtherCostRatePercent + rule.otherCostRatePercentAdd,
+      };
+    },
+    {
+      activeKeys: [] as DevelopmentSiteConditionKey[],
+      additionalConstructionMonths: 0,
+      additionalOtherCostRatePercent: 0,
+    }
+  );
+};
+
+const getTokyoRcDevelopmentBand = (constructionCostJpy: number) =>
+  TOKYO_RC_DEVELOPMENT_BANDS.find(
+    (band) => constructionCostJpy <= band.maxConstructionCostJpy
+  ) ?? TOKYO_RC_DEVELOPMENT_BANDS[TOKYO_RC_DEVELOPMENT_BANDS.length - 1];
+
+const getReferenceConstructionCost = (input: PropertyInput) => {
+  if (Number.isFinite(input.developmentConstructionCost) && input.developmentConstructionCost > 0) {
+    return input.developmentConstructionCost;
+  }
+  if (
+    Number.isFinite(input.price) &&
+    input.price > 0 &&
+    Number.isFinite(input.buildingRatio) &&
+    input.buildingRatio > 0
+  ) {
+    return Math.round(input.price * (input.buildingRatio / 100));
+  }
+  return TOKYO_RC_DEFAULT_CONSTRUCTION_COST_JPY;
+};
+
+const getTokyoRcConstructionMonths = (constructionCostJpy: number, unitCount: number) => {
+  const band = getTokyoRcDevelopmentBand(constructionCostJpy);
+  const safeUnits =
+    Number.isFinite(unitCount) && unitCount > 0 ? unitCount : TOKYO_RC_DEFAULT_UNIT_COUNT;
+  let months = band.baseConstructionMonths;
+  if (safeUnits > 40) months += 1;
+  if (safeUnits > 80) months += 1;
+  return months;
+};
+
+const getTokyoRcLeaseUpMonths = (unitCount: number) => {
+  const safeUnits =
+    Number.isFinite(unitCount) && unitCount > 0 ? unitCount : TOKYO_RC_DEFAULT_UNIT_COUNT;
+  return (
+    TOKYO_RC_LEASE_UP_BANDS.find((band) => safeUnits <= band.maxUnitCount)?.leaseUpMonths ?? 6
+  );
+};
+
+const numbersMatch = (left: number | null | undefined, right: number | null | undefined) =>
+  Number.isFinite(left as number) &&
+  Number.isFinite(right as number) &&
+  Math.abs((left as number) - (right as number)) < 0.0001;
+
+export const getSuggestedDevelopmentDefaults = (
+  input: PropertyInput
+): Partial<Pick<PropertyInput, DevelopmentAutoFillKey>> => {
+  if (!isTokyoRcDevelopmentScenario(input)) {
+    return {};
+  }
+
+  const referenceConstructionCost = getReferenceConstructionCost(input);
+  const constructionCost =
+    Number.isFinite(input.developmentConstructionCost) && input.developmentConstructionCost > 0
+      ? input.developmentConstructionCost
+      : 0;
+  const unitCount =
+    Number.isFinite(input.unitCount) && input.unitCount > 0
+      ? input.unitCount
+      : TOKYO_RC_DEFAULT_UNIT_COUNT;
+  const band = getTokyoRcDevelopmentBand(referenceConstructionCost);
+  const siteConditionAdjustment = getDevelopmentSiteConditionAdjustment(input);
+  const constructionMonths =
+    getTokyoRcConstructionMonths(referenceConstructionCost, unitCount) +
+    siteConditionAdjustment.additionalConstructionMonths;
+  const leaseUpMonths = getTokyoRcLeaseUpMonths(unitCount);
+  const otherCostRatePercent =
+    band.otherCostRatePercent + siteConditionAdjustment.additionalOtherCostRatePercent;
+
+  return {
+    developmentSoftCost:
+      constructionCost > 0
+        ? Math.round(constructionCost * (band.softCostRatePercent / 100))
+        : 0,
+    developmentOtherCost:
+      constructionCost > 0
+        ? Math.round(constructionCost * (otherCostRatePercent / 100))
+        : 0,
+    developmentContingencyRate: band.contingencyRatePercent,
+    developmentConstructionMonths: constructionMonths,
+    developmentLeaseUpMonths: leaseUpMonths,
+    developmentInterestOnlyMonths:
+      constructionMonths + leaseUpMonths + TOKYO_RC_INTEREST_ONLY_BUFFER_MONTHS,
+  };
+};
+
+export const applySuggestedDevelopmentDefaults = (
+  input: PropertyInput,
+  previousInput?: PropertyInput,
+  options?: { preserveKeys?: DevelopmentAutoFillKey[] }
+): PropertyInput => {
+  const nextSuggestions = getSuggestedDevelopmentDefaults(input);
+  const previousSuggestions = previousInput
+    ? getSuggestedDevelopmentDefaults(previousInput)
+    : {};
+  const preservedKeys = new Set(options?.preserveKeys ?? []);
+  const next = { ...input };
+
+  DEVELOPMENT_AUTO_FILL_KEYS.forEach((key) => {
+    if (preservedKeys.has(key)) return;
+
+    const suggestedValue = nextSuggestions[key];
+    if (!Number.isFinite(suggestedValue as number)) return;
+
+    const currentValue = input[key];
+    const previousValue = previousInput?.[key];
+    const previousSuggestedValue = previousSuggestions[key];
+    const shouldApply =
+      isMissingNumber(currentValue) ||
+      numbersMatch(previousValue as number, previousSuggestedValue as number);
+
+    if (shouldApply) {
+      next[key] = suggestedValue as number;
+    }
+  });
+
+  return next;
+};
+
 export const applyEstimatedDefaults = (input: PropertyInput): PropertyInput => {
-  const structure = input.structure;
-  const buildingAge = input.buildingAge;
+  const inputWithDevelopmentDefaults = applySuggestedDevelopmentDefaults(input);
+  const structure = inputWithDevelopmentDefaults.structure;
+  const buildingAge = inputWithDevelopmentDefaults.buildingAge;
   const suggestedBuildingRatio =
-    isMissingNumber(input.buildingRatio) ? getSuggestedBuildingRatio(structure, buildingAge) : null;
+    isMissingNumber(inputWithDevelopmentDefaults.buildingRatio)
+      ? getSuggestedBuildingRatio(structure, buildingAge)
+      : null;
   const suggestedEquityRatio =
-    isMissingNumber(input.equityRatio) && input.price > 0
+    isMissingNumber(inputWithDevelopmentDefaults.equityRatio) &&
+    inputWithDevelopmentDefaults.price > 0
       ? Math.min(
           100,
           Math.max(
             0,
-            ((input.price - (input.loanAmount ?? Math.round(input.price * 0.95))) / input.price) * 100
+            ((inputWithDevelopmentDefaults.price -
+              (inputWithDevelopmentDefaults.loanAmount ??
+                Math.round(inputWithDevelopmentDefaults.price * 0.95))) /
+              inputWithDevelopmentDefaults.price) *
+              100
           )
         )
       : null;
   const suggestedLoanAmount =
-    isMissingNumber(input.loanAmount) && input.price > 0
+    isMissingNumber(inputWithDevelopmentDefaults.loanAmount) &&
+    inputWithDevelopmentDefaults.price > 0
       ? Math.max(
           0,
           Math.round(
-            input.price *
-              (1 - (suggestedEquityRatio ?? input.equityRatio ?? 5) / 100)
+            inputWithDevelopmentDefaults.price *
+              (1 - (suggestedEquityRatio ?? inputWithDevelopmentDefaults.equityRatio ?? 5) / 100)
           )
         )
       : null;
   const suggestedInterestRate =
-    isMissingNumber(input.interestRate) ? getSuggestedInterestRate(structure) : null;
+    isMissingNumber(inputWithDevelopmentDefaults.interestRate)
+      ? getSuggestedInterestRate(structure)
+      : null;
   const suggestedLoanDuration =
-    isMissingNumber(input.loanDuration) ? getSuggestedLoanDuration(structure, buildingAge) : null;
+    isMissingNumber(inputWithDevelopmentDefaults.loanDuration)
+      ? getSuggestedLoanDuration(structure, buildingAge)
+      : null;
   const suggestedOccupancyRate =
-    isMissingNumber(input.occupancyRate) ? getSuggestedOccupancyRate(buildingAge) : null;
+    isMissingNumber(inputWithDevelopmentDefaults.occupancyRate)
+      ? getSuggestedOccupancyRate(buildingAge)
+      : null;
   const suggestedOperatingExpenseRate =
-    isMissingNumber(input.operatingExpenseRate)
+    isMissingNumber(inputWithDevelopmentDefaults.operatingExpenseRate)
       ? getSuggestedOperatingExpenseRate(structure, buildingAge)
       : null;
-  const hasOerMode = input.oerMode === "SIMPLE" || input.oerMode === "DETAILED";
+  const hasOerMode =
+    inputWithDevelopmentDefaults.oerMode === "SIMPLE" ||
+    inputWithDevelopmentDefaults.oerMode === "DETAILED";
   const oerLeasingEnabled =
-    typeof input.oerLeasingEnabled === "boolean" ? input.oerLeasingEnabled : true;
+    typeof inputWithDevelopmentDefaults.oerLeasingEnabled === "boolean"
+      ? inputWithDevelopmentDefaults.oerLeasingEnabled
+      : true;
 
   return {
-    ...input,
-    buildingRatio: suggestedBuildingRatio ?? input.buildingRatio,
-    equityRatio: suggestedEquityRatio ?? input.equityRatio,
-    loanAmount: suggestedLoanAmount ?? input.loanAmount,
-    interestRate: suggestedInterestRate ?? input.interestRate,
-    loanDuration: suggestedLoanDuration ?? input.loanDuration,
-    occupancyRate: suggestedOccupancyRate ?? input.occupancyRate,
-    operatingExpenseRate: suggestedOperatingExpenseRate ?? input.operatingExpenseRate,
-    unitCount: isMissingNumber(input.unitCount) ? 0 : input.unitCount,
-    cleaningVisitsPerMonth: isMissingNumber(input.cleaningVisitsPerMonth)
+    ...inputWithDevelopmentDefaults,
+    buildingRatio: suggestedBuildingRatio ?? inputWithDevelopmentDefaults.buildingRatio,
+    equityRatio: suggestedEquityRatio ?? inputWithDevelopmentDefaults.equityRatio,
+    loanAmount: suggestedLoanAmount ?? inputWithDevelopmentDefaults.loanAmount,
+    interestRate: suggestedInterestRate ?? inputWithDevelopmentDefaults.interestRate,
+    loanDuration: suggestedLoanDuration ?? inputWithDevelopmentDefaults.loanDuration,
+    occupancyRate: suggestedOccupancyRate ?? inputWithDevelopmentDefaults.occupancyRate,
+    operatingExpenseRate:
+      suggestedOperatingExpenseRate ?? inputWithDevelopmentDefaults.operatingExpenseRate,
+    unitCount: isMissingNumber(inputWithDevelopmentDefaults.unitCount)
+      ? 0
+      : inputWithDevelopmentDefaults.unitCount,
+    cleaningVisitsPerMonth: isMissingNumber(inputWithDevelopmentDefaults.cleaningVisitsPerMonth)
       ? 2
-      : input.cleaningVisitsPerMonth,
-    oerMode: hasOerMode ? input.oerMode : "SIMPLE",
-    oerRateItems: Array.isArray(input.oerRateItems) ? input.oerRateItems : [],
-    oerFixedItems: Array.isArray(input.oerFixedItems) ? input.oerFixedItems : [],
-    oerEventItems: Array.isArray(input.oerEventItems) ? input.oerEventItems : [],
+      : inputWithDevelopmentDefaults.cleaningVisitsPerMonth,
+    oerMode: hasOerMode ? inputWithDevelopmentDefaults.oerMode : "SIMPLE",
+    oerRateItems: Array.isArray(inputWithDevelopmentDefaults.oerRateItems)
+      ? inputWithDevelopmentDefaults.oerRateItems
+      : [],
+    oerFixedItems: Array.isArray(inputWithDevelopmentDefaults.oerFixedItems)
+      ? inputWithDevelopmentDefaults.oerFixedItems
+      : [],
+    oerEventItems: Array.isArray(inputWithDevelopmentDefaults.oerEventItems)
+      ? inputWithDevelopmentDefaults.oerEventItems
+      : [],
     oerLeasingEnabled,
-    oerLeasingMonths: isMissingNumber(input.oerLeasingMonths) ? 2 : input.oerLeasingMonths,
-    oerLeasingTenancyYears: isMissingNumber(input.oerLeasingTenancyYears)
+    oerLeasingMonths: isMissingNumber(inputWithDevelopmentDefaults.oerLeasingMonths)
       ? 2
-      : input.oerLeasingTenancyYears,
-    rentDeclineRate: isMissingNumber(input.rentDeclineRate) ? 0.5 : input.rentDeclineRate,
-    waterContributionRate: isMissingNumber(input.waterContributionRate) ? 0.2 : input.waterContributionRate,
-    fireInsuranceRate: isMissingNumber(input.fireInsuranceRate) ? 0.4 : input.fireInsuranceRate,
-    loanFeeRate: isMissingNumber(input.loanFeeRate) ? 2.2 : input.loanFeeRate,
-    registrationCostRate: isMissingNumber(input.registrationCostRate) ? 1.2 : input.registrationCostRate,
-    acquisitionTaxRate: isMissingNumber(input.acquisitionTaxRate) ? 3 : input.acquisitionTaxRate,
-    acquisitionLandReductionRate: isMissingNumber(input.acquisitionLandReductionRate)
-      ? 50
-      : input.acquisitionLandReductionRate,
-    landEvaluationRate: isMissingNumber(input.landEvaluationRate) ? 70 : input.landEvaluationRate,
-    buildingEvaluationRate: isMissingNumber(input.buildingEvaluationRate)
-      ? 50
-      : input.buildingEvaluationRate,
-    landTaxReductionRate: isMissingNumber(input.landTaxReductionRate) ? 16.67 : input.landTaxReductionRate,
-    propertyTaxRate: isMissingNumber(input.propertyTaxRate) ? 1.7 : input.propertyTaxRate,
-    newBuildTaxReductionEnabled:
-      typeof input.newBuildTaxReductionEnabled === "boolean"
-        ? input.newBuildTaxReductionEnabled
-        : false,
-    vacancyModel: input.vacancyModel ?? ("FIXED" as VacancyModelType),
-    vacancyCycleYears: isMissingNumber(input.vacancyCycleYears) ? 4 : input.vacancyCycleYears,
-    vacancyCycleMonths: isMissingNumber(input.vacancyCycleMonths) ? 3 : input.vacancyCycleMonths,
-    vacancyProbability: isMissingNumber(input.vacancyProbability) ? 20 : input.vacancyProbability,
-    vacancyProbabilityMonths: isMissingNumber(input.vacancyProbabilityMonths)
+      : inputWithDevelopmentDefaults.oerLeasingMonths,
+    oerLeasingTenancyYears: isMissingNumber(inputWithDevelopmentDefaults.oerLeasingTenancyYears)
       ? 2
-      : input.vacancyProbabilityMonths,
-    incomeTaxRate: isMissingNumber(input.incomeTaxRate) ? 20 : input.incomeTaxRate,
-    corporateMinimumTax: isMissingNumber(input.corporateMinimumTax) ? 70000 : input.corporateMinimumTax,
-    equipmentRatio: isMissingNumber(input.equipmentRatio) ? 20 : input.equipmentRatio,
-    equipmentUsefulLife: isMissingNumber(input.equipmentUsefulLife) ? 15 : input.equipmentUsefulLife,
-    scenarioInterestShockYear: isMissingNumber(input.scenarioInterestShockYear)
-      ? 5
-      : input.scenarioInterestShockYear,
-    scenarioInterestShockDelta: isMissingNumber(input.scenarioInterestShockDelta)
-      ? 1
-      : input.scenarioInterestShockDelta,
-    scenarioRentDeclineEarlyRate: isMissingNumber(input.scenarioRentDeclineEarlyRate)
-      ? 1.5
-      : input.scenarioRentDeclineEarlyRate,
-    scenarioRentDeclineLateRate: isMissingNumber(input.scenarioRentDeclineLateRate)
+      : inputWithDevelopmentDefaults.oerLeasingTenancyYears,
+    rentDeclineRate: isMissingNumber(inputWithDevelopmentDefaults.rentDeclineRate)
       ? 0.5
-      : input.scenarioRentDeclineLateRate,
-    scenarioRentDeclineSwitchYear: isMissingNumber(input.scenarioRentDeclineSwitchYear)
-      ? 10
-      : input.scenarioRentDeclineSwitchYear,
-    scenarioOccupancyDeclineStartYear: isMissingNumber(input.scenarioOccupancyDeclineStartYear)
-      ? 10
-      : input.scenarioOccupancyDeclineStartYear,
-    scenarioOccupancyDeclineDelta: isMissingNumber(input.scenarioOccupancyDeclineDelta)
+      : inputWithDevelopmentDefaults.rentDeclineRate,
+    waterContributionRate: isMissingNumber(inputWithDevelopmentDefaults.waterContributionRate)
+      ? 0.2
+      : inputWithDevelopmentDefaults.waterContributionRate,
+    fireInsuranceRate: isMissingNumber(inputWithDevelopmentDefaults.fireInsuranceRate)
+      ? 0.4
+      : inputWithDevelopmentDefaults.fireInsuranceRate,
+    loanFeeRate: isMissingNumber(inputWithDevelopmentDefaults.loanFeeRate)
+      ? 2.2
+      : inputWithDevelopmentDefaults.loanFeeRate,
+    registrationCostRate: isMissingNumber(inputWithDevelopmentDefaults.registrationCostRate)
+      ? 1.2
+      : inputWithDevelopmentDefaults.registrationCostRate,
+    acquisitionTaxRate: isMissingNumber(inputWithDevelopmentDefaults.acquisitionTaxRate)
+      ? 3
+      : inputWithDevelopmentDefaults.acquisitionTaxRate,
+    acquisitionLandReductionRate: isMissingNumber(
+      inputWithDevelopmentDefaults.acquisitionLandReductionRate
+    )
+      ? 50
+      : inputWithDevelopmentDefaults.acquisitionLandReductionRate,
+    landEvaluationRate: isMissingNumber(inputWithDevelopmentDefaults.landEvaluationRate)
+      ? 70
+      : inputWithDevelopmentDefaults.landEvaluationRate,
+    buildingEvaluationRate: isMissingNumber(inputWithDevelopmentDefaults.buildingEvaluationRate)
+      ? 50
+      : inputWithDevelopmentDefaults.buildingEvaluationRate,
+    landTaxReductionRate: isMissingNumber(inputWithDevelopmentDefaults.landTaxReductionRate)
+      ? 16.67
+      : inputWithDevelopmentDefaults.landTaxReductionRate,
+    propertyTaxRate: isMissingNumber(inputWithDevelopmentDefaults.propertyTaxRate)
+      ? 1.7
+      : inputWithDevelopmentDefaults.propertyTaxRate,
+    newBuildTaxReductionEnabled:
+      typeof inputWithDevelopmentDefaults.newBuildTaxReductionEnabled === "boolean"
+        ? inputWithDevelopmentDefaults.newBuildTaxReductionEnabled
+        : false,
+    vacancyModel: inputWithDevelopmentDefaults.vacancyModel ?? ("FIXED" as VacancyModelType),
+    vacancyCycleYears: isMissingNumber(inputWithDevelopmentDefaults.vacancyCycleYears)
+      ? 4
+      : inputWithDevelopmentDefaults.vacancyCycleYears,
+    vacancyCycleMonths: isMissingNumber(inputWithDevelopmentDefaults.vacancyCycleMonths)
+      ? 3
+      : inputWithDevelopmentDefaults.vacancyCycleMonths,
+    vacancyProbability: isMissingNumber(inputWithDevelopmentDefaults.vacancyProbability)
+      ? 20
+      : inputWithDevelopmentDefaults.vacancyProbability,
+    vacancyProbabilityMonths: isMissingNumber(inputWithDevelopmentDefaults.vacancyProbabilityMonths)
+      ? 2
+      : inputWithDevelopmentDefaults.vacancyProbabilityMonths,
+    incomeTaxRate: isMissingNumber(inputWithDevelopmentDefaults.incomeTaxRate)
+      ? 20
+      : inputWithDevelopmentDefaults.incomeTaxRate,
+    corporateMinimumTax: isMissingNumber(inputWithDevelopmentDefaults.corporateMinimumTax)
+      ? 70000
+      : inputWithDevelopmentDefaults.corporateMinimumTax,
+    equipmentRatio: isMissingNumber(inputWithDevelopmentDefaults.equipmentRatio)
+      ? 20
+      : inputWithDevelopmentDefaults.equipmentRatio,
+    equipmentUsefulLife: isMissingNumber(inputWithDevelopmentDefaults.equipmentUsefulLife)
+      ? 15
+      : inputWithDevelopmentDefaults.equipmentUsefulLife,
+    scenarioInterestShockYear: isMissingNumber(inputWithDevelopmentDefaults.scenarioInterestShockYear)
       ? 5
-      : input.scenarioOccupancyDeclineDelta,
-    exitYear: isMissingNumber(input.exitYear) ? 10 : input.exitYear,
-    exitCapRate: isMissingNumber(input.exitCapRate) ? 7 : input.exitCapRate,
-    exitBrokerageRate: isMissingNumber(input.exitBrokerageRate) ? 3 : input.exitBrokerageRate,
-    exitBrokerageFixed: isMissingNumber(input.exitBrokerageFixed) ? 600000 : input.exitBrokerageFixed,
-    exitOtherCostRate: isMissingNumber(input.exitOtherCostRate) ? 1 : input.exitOtherCostRate,
-    exitShortTermTaxRate: isMissingNumber(input.exitShortTermTaxRate) ? 39 : input.exitShortTermTaxRate,
-    exitLongTermTaxRate: isMissingNumber(input.exitLongTermTaxRate) ? 20 : input.exitLongTermTaxRate,
-    exitDiscountRate: isMissingNumber(input.exitDiscountRate) ? 4 : input.exitDiscountRate,
+      : inputWithDevelopmentDefaults.scenarioInterestShockYear,
+    scenarioInterestShockDelta: isMissingNumber(inputWithDevelopmentDefaults.scenarioInterestShockDelta)
+      ? 1
+      : inputWithDevelopmentDefaults.scenarioInterestShockDelta,
+    scenarioRentDeclineEarlyRate: isMissingNumber(
+      inputWithDevelopmentDefaults.scenarioRentDeclineEarlyRate
+    )
+      ? 1.5
+      : inputWithDevelopmentDefaults.scenarioRentDeclineEarlyRate,
+    scenarioRentDeclineLateRate: isMissingNumber(
+      inputWithDevelopmentDefaults.scenarioRentDeclineLateRate
+    )
+      ? 0.5
+      : inputWithDevelopmentDefaults.scenarioRentDeclineLateRate,
+    scenarioRentDeclineSwitchYear: isMissingNumber(
+      inputWithDevelopmentDefaults.scenarioRentDeclineSwitchYear
+    )
+      ? 10
+      : inputWithDevelopmentDefaults.scenarioRentDeclineSwitchYear,
+    scenarioOccupancyDeclineStartYear: isMissingNumber(
+      inputWithDevelopmentDefaults.scenarioOccupancyDeclineStartYear
+    )
+      ? 10
+      : inputWithDevelopmentDefaults.scenarioOccupancyDeclineStartYear,
+    scenarioOccupancyDeclineDelta: isMissingNumber(
+      inputWithDevelopmentDefaults.scenarioOccupancyDeclineDelta
+    )
+      ? 5
+      : inputWithDevelopmentDefaults.scenarioOccupancyDeclineDelta,
+    exitYear: isMissingNumber(inputWithDevelopmentDefaults.exitYear)
+      ? 10
+      : inputWithDevelopmentDefaults.exitYear,
+    exitCapRate: isMissingNumber(inputWithDevelopmentDefaults.exitCapRate)
+      ? 7
+      : inputWithDevelopmentDefaults.exitCapRate,
+    exitBrokerageRate: isMissingNumber(inputWithDevelopmentDefaults.exitBrokerageRate)
+      ? 3
+      : inputWithDevelopmentDefaults.exitBrokerageRate,
+    exitBrokerageFixed: isMissingNumber(inputWithDevelopmentDefaults.exitBrokerageFixed)
+      ? 600000
+      : inputWithDevelopmentDefaults.exitBrokerageFixed,
+    exitOtherCostRate: isMissingNumber(inputWithDevelopmentDefaults.exitOtherCostRate)
+      ? 1
+      : inputWithDevelopmentDefaults.exitOtherCostRate,
+    exitShortTermTaxRate: isMissingNumber(inputWithDevelopmentDefaults.exitShortTermTaxRate)
+      ? 39
+      : inputWithDevelopmentDefaults.exitShortTermTaxRate,
+    exitLongTermTaxRate: isMissingNumber(inputWithDevelopmentDefaults.exitLongTermTaxRate)
+      ? 20
+      : inputWithDevelopmentDefaults.exitLongTermTaxRate,
+    exitDiscountRate: isMissingNumber(inputWithDevelopmentDefaults.exitDiscountRate)
+      ? 4
+      : inputWithDevelopmentDefaults.exitDiscountRate,
   };
 };
 
 const AUTO_FILL_KEYS: (keyof PropertyInput)[] = [
   "buildingRatio",
+  "developmentSoftCost",
+  "developmentOtherCost",
+  "developmentContingencyRate",
+  "developmentConstructionMonths",
+  "developmentLeaseUpMonths",
+  "developmentInterestOnlyMonths",
   "equityRatio",
   "loanAmount",
   "interestRate",

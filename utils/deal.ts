@@ -1,4 +1,9 @@
-import type { PropertyInput, StructureType, YearlyResult } from "./types";
+import type {
+  DevelopmentSiteConditionKey,
+  PropertyInput,
+  StructureType,
+  YearlyResult,
+} from "./types";
 import { getDevelopmentCostSummary, isDevelopmentMode } from "./development";
 
 type JsonObject = Record<string, unknown>;
@@ -60,6 +65,58 @@ const TERMINAL_PIPELINE_STAGES = new Set([
   "go",
   "purchased",
 ]);
+
+const DEVELOPMENT_SITE_CONDITION_NOTE_PREFIX = "Simulator site conditions:";
+const DEVELOPMENT_SITE_CONDITION_NOTE_TOKENS: Record<DevelopmentSiteConditionKey, string> = {
+  siteConditionDemolition: "demolition",
+  siteConditionRetainingWall: "retaining_wall",
+  siteConditionGroundImprovement: "ground_improvement",
+  siteConditionBasement: "basement",
+  siteConditionLogisticsConstraint: "logistics_constraint",
+};
+
+function buildDevelopmentSiteConditionNote(input: PropertyInput) {
+  const selectedTokens = (Object.entries(DEVELOPMENT_SITE_CONDITION_NOTE_TOKENS) as [
+    DevelopmentSiteConditionKey,
+    string,
+  ][])
+    .filter(([key]) => input[key])
+    .map(([, token]) => token);
+  return `${DEVELOPMENT_SITE_CONDITION_NOTE_PREFIX} ${
+    selectedTokens.length > 0 ? selectedTokens.join(", ") : "none"
+  }`;
+}
+
+function parseDevelopmentSiteConditionNotes(notes: unknown): Partial<
+  Pick<PropertyInput, DevelopmentSiteConditionKey>
+> {
+  const matchedNote = asStringArray(notes).find((note) =>
+    note.startsWith(DEVELOPMENT_SITE_CONDITION_NOTE_PREFIX)
+  );
+  if (!matchedNote) return {};
+
+  const rawValue = matchedNote.slice(DEVELOPMENT_SITE_CONDITION_NOTE_PREFIX.length).trim().toLowerCase();
+  if (!rawValue || rawValue === "none") {
+    return {};
+  }
+
+  const tokens = new Set(
+    rawValue
+      .split(",")
+      .map((token) => token.trim())
+      .filter(Boolean)
+  );
+
+  return (Object.entries(DEVELOPMENT_SITE_CONDITION_NOTE_TOKENS) as [
+    DevelopmentSiteConditionKey,
+    string,
+  ][]).reduce<Partial<Pick<PropertyInput, DevelopmentSiteConditionKey>>>((accumulator, [key, token]) => {
+    if (tokens.has(token)) {
+      accumulator[key] = true;
+    }
+    return accumulator;
+  }, {});
+}
 
 export function parseDealForSimulation(text: string): DealImportResult {
   let parsed: unknown;
@@ -246,6 +303,7 @@ export function buildDealWithSimulationRun({
       mode === "new_development"
         ? "Current simulator stores a development-mode cost snapshot with construction and lease-up assumptions."
         : "Current simulator stores a manual cost snapshot from the existing-asset workflow.",
+      ...(mode === "new_development" ? [buildDevelopmentSiteConditionNote(input)] : []),
     ],
   };
 
@@ -265,7 +323,10 @@ export function buildDealWithSimulationRun({
       mode === "new_development" ? roundPercent(input.interestRate) : null,
     permanent_loan_interest_percent: roundPercent(input.interestRate),
     loan_term_years: Math.round(input.loanDuration),
-    interest_only_months: mode === "new_development" ? 12 : 0,
+    interest_only_months:
+      mode === "new_development"
+        ? Math.max(0, Math.round(input.developmentInterestOnlyMonths))
+        : 0,
     loan_fee_rate_percent: roundPercent(input.loanFeeRate),
     hold_years: input.exitEnabled ? Math.round(input.exitYear) : null,
     exit_cap_rate_percent: input.exitEnabled ? roundPercent(input.exitCapRate) : null,
@@ -468,6 +529,7 @@ function buildDealImport(parsed: unknown): DealImportResult {
   patch.investmentMode = developmentMode ? "NEW_DEVELOPMENT" : "EXISTING_ASSET";
 
   if (developmentMode) {
+    const importedSiteConditions = parseDevelopmentSiteConditionNotes(selectedCostStudy?.notes);
     patch.buildingAge = 0;
     patch.newBuildTaxReductionEnabled = true;
     patch.developmentLandPrice =
@@ -504,9 +566,20 @@ function buildDealImport(parsed: unknown): DealImportResult {
       Math.round(asNumber(getPath(selectedCostStudy, "schedule", "lease_up_months")) ?? 6);
     patch.developmentInterestOnlyMonths =
       Math.round(
-        asNumber(getPath(selectedCostStudy, "schedule", "stabilization_month")) ??
+        asNumber(getPath(selectedFinance, "interest_only_months")) ??
+          asNumber(getPath(selectedCostStudy, "schedule", "stabilization_month")) ??
           ((patch.developmentConstructionMonths ?? 12) + (patch.developmentLeaseUpMonths ?? 6))
       );
+    patch.siteConditionDemolition =
+      importedSiteConditions.siteConditionDemolition ??
+      ((asNumber(getPath(selectedCostStudy, "breakdown", "demolition_cost_jpy")) ?? 0) > 0);
+    patch.siteConditionRetainingWall = importedSiteConditions.siteConditionRetainingWall ?? false;
+    patch.siteConditionGroundImprovement =
+      importedSiteConditions.siteConditionGroundImprovement ??
+      ((asNumber(getPath(selectedCostStudy, "breakdown", "ground_improvement_cost_jpy")) ?? 0) > 0);
+    patch.siteConditionBasement = importedSiteConditions.siteConditionBasement ?? false;
+    patch.siteConditionLogisticsConstraint =
+      importedSiteConditions.siteConditionLogisticsConstraint ?? false;
     warnings.push("この Deal は新築開発案件として読み込みました。工期とリーシング前提を Step 2 で確認してください。");
   }
 

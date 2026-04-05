@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  DevelopmentSiteConditionKey,
   InvestmentMode,
   PropertyInput,
   StructureType,
@@ -13,7 +14,11 @@ import {
   OerAgeBand,
   OerPropertyType,
 } from "../utils/types";
-import { getSuggestedBuildingRatio } from "../utils/estimates";
+import {
+  applySuggestedDevelopmentDefaults,
+  getDevelopmentSiteConditionAdjustment,
+  getSuggestedBuildingRatio,
+} from "../utils/estimates";
 import {
   getDevelopmentCostSummary,
   isDevelopmentMode,
@@ -53,6 +58,17 @@ const OER_LEASING_DEFAULTS: Record<OerAgeBand, { months: number; tenancyYears: n
   MID: { months: 1.5, tenancyYears: 2.5 },
   OLD: { months: 2.0, tenancyYears: 2 },
 };
+
+const DEVELOPMENT_SITE_CONDITION_OPTIONS: {
+  helpKey: DevelopmentSiteConditionKey;
+  label: string;
+}[] = [
+  { helpKey: "siteConditionDemolition", label: "解体あり" },
+  { helpKey: "siteConditionRetainingWall", label: "擁壁・高低差あり" },
+  { helpKey: "siteConditionGroundImprovement", label: "地盤改良あり" },
+  { helpKey: "siteConditionBasement", label: "地下・ピットあり" },
+  { helpKey: "siteConditionLogisticsConstraint", label: "前面道路・搬入制約あり" },
+];
 
 type InputHelp = {
   title: string;
@@ -127,6 +143,36 @@ const INPUT_HELP: Record<string, InputHelp> = {
     title: "元本据置（月）",
     body:
       "説明：建築期間中から安定稼働まで、元本返済を据え置く月数です。\n結果への影響：初年度CFとDSCRに大きく影響します。\nコツ：工期＋リーシング月数を基本に、融資条件に合わせて設定してください。",
+  },
+  developmentSiteConditions: {
+    title: "Site Conditions",
+    body:
+      "説明：敷地条件の難易度をトグルで反映します。\n結果への影響：未入力の「造成・解体等」と「工期」に Matrix の加算補正が入ります。\nコツ：詳細見積がある場合はトグルより実額入力を優先し、スクリーニング段階では不確定要素だけONにすると使いやすいです。",
+  },
+  siteConditionDemolition: {
+    title: "解体あり",
+    body:
+      "説明：既存建物や残置物の撤去が必要な敷地です。\n結果への影響：造成・解体等と工期に上振れ要因として反映します。\nコツ：アスベストや地下埋設物が見えている場合は、別途さらに保守的に見るのがおすすめです。",
+  },
+  siteConditionRetainingWall: {
+    title: "擁壁・高低差あり",
+    body:
+      "説明：擁壁対応や高低差処理が必要な敷地です。\n結果への影響：造成・外構系コストと工期に加算されます。\nコツ：隣地との高低差が大きい案件は、概算の段階でもONが安全です。",
+  },
+  siteConditionGroundImprovement: {
+    title: "地盤改良あり",
+    body:
+      "説明：杭や表層改良などの地盤対策を見込む敷地です。\n結果への影響：造成・解体等と工期の両方に加算されます。\nコツ：ボーリング未実施でも、軟弱地盤エリアなら先にONで試算して感度を見ると有効です。",
+  },
+  siteConditionBasement: {
+    title: "地下・ピットあり",
+    body:
+      "説明：地下躯体や深いピット、掘削難易度の高い計画です。\n結果への影響：造成・解体等と工期への加算が最も大きくなります。\nコツ：地下住戸や機械室、深基礎が絡む場合の保守値として使ってください。",
+  },
+  siteConditionLogisticsConstraint: {
+    title: "前面道路・搬入制約あり",
+    body:
+      "説明：狭小前面道路や搬入制約で施工効率が落ちる敷地です。\n結果への影響：工期と付帯工事費に上振れ要因として反映します。\nコツ：4m未満接道、重機搬入制限、長い小運搬が想定される場合にONが目安です。",
   },
   grossYield: {
     title: "表面利回り（%）",
@@ -580,6 +626,43 @@ export const SimulationForm: React.FC<Props> = ({
     ? formData.developmentInterestOnlyMonths
     : initialData.developmentInterestOnlyMonths ??
       ((initialData.developmentConstructionMonths ?? 12) + (initialData.developmentLeaseUpMonths ?? 6));
+  const siteConditionDemolitionValue =
+    typeof formData.siteConditionDemolition === "boolean"
+      ? formData.siteConditionDemolition
+      : initialData.siteConditionDemolition ?? false;
+  const siteConditionRetainingWallValue =
+    typeof formData.siteConditionRetainingWall === "boolean"
+      ? formData.siteConditionRetainingWall
+      : initialData.siteConditionRetainingWall ?? false;
+  const siteConditionGroundImprovementValue =
+    typeof formData.siteConditionGroundImprovement === "boolean"
+      ? formData.siteConditionGroundImprovement
+      : initialData.siteConditionGroundImprovement ?? false;
+  const siteConditionBasementValue =
+    typeof formData.siteConditionBasement === "boolean"
+      ? formData.siteConditionBasement
+      : initialData.siteConditionBasement ?? false;
+  const siteConditionLogisticsConstraintValue =
+    typeof formData.siteConditionLogisticsConstraint === "boolean"
+      ? formData.siteConditionLogisticsConstraint
+      : initialData.siteConditionLogisticsConstraint ?? false;
+  const developmentSiteConditionAdjustment = useMemo(
+    () =>
+      getDevelopmentSiteConditionAdjustment({
+        siteConditionDemolition: siteConditionDemolitionValue,
+        siteConditionRetainingWall: siteConditionRetainingWallValue,
+        siteConditionGroundImprovement: siteConditionGroundImprovementValue,
+        siteConditionBasement: siteConditionBasementValue,
+        siteConditionLogisticsConstraint: siteConditionLogisticsConstraintValue,
+      }),
+    [
+      siteConditionBasementValue,
+      siteConditionDemolitionValue,
+      siteConditionGroundImprovementValue,
+      siteConditionLogisticsConstraintValue,
+      siteConditionRetainingWallValue,
+    ]
+  );
   const developmentSummary = useMemo(
     () =>
       getDevelopmentCostSummary({
@@ -867,9 +950,13 @@ export const SimulationForm: React.FC<Props> = ({
   ]);
 
   useEffect(() => {
-    const normalizedInitial = isDevelopmentMode(initialData)
-      ? syncDevelopmentDerivedInput(initialData)
-      : initialData;
+    const developmentAwareInitial =
+      isDevelopmentMode(initialData) && !isBlankInput(initialData)
+        ? applySuggestedDevelopmentDefaults(initialData)
+        : initialData;
+    const normalizedInitial = isDevelopmentMode(developmentAwareInitial)
+      ? syncDevelopmentDerivedInput(developmentAwareInitial)
+      : developmentAwareInitial;
     const nextPristine = isBlankInput(normalizedInitial);
     setIsPristine(nextPristine);
     setBuildingRatioTouched(normalizedInitial.buildingRatio > 0);
@@ -1062,6 +1149,26 @@ export const SimulationForm: React.FC<Props> = ({
       ? formData.developmentInterestOnlyMonths
       : initialData.developmentInterestOnlyMonths ??
         (developmentConstructionMonths + developmentLeaseUpMonths);
+    const siteConditionDemolition =
+      typeof formData.siteConditionDemolition === "boolean"
+        ? formData.siteConditionDemolition
+        : initialData.siteConditionDemolition ?? false;
+    const siteConditionRetainingWall =
+      typeof formData.siteConditionRetainingWall === "boolean"
+        ? formData.siteConditionRetainingWall
+        : initialData.siteConditionRetainingWall ?? false;
+    const siteConditionGroundImprovement =
+      typeof formData.siteConditionGroundImprovement === "boolean"
+        ? formData.siteConditionGroundImprovement
+        : initialData.siteConditionGroundImprovement ?? false;
+    const siteConditionBasement =
+      typeof formData.siteConditionBasement === "boolean"
+        ? formData.siteConditionBasement
+        : initialData.siteConditionBasement ?? false;
+    const siteConditionLogisticsConstraint =
+      typeof formData.siteConditionLogisticsConstraint === "boolean"
+        ? formData.siteConditionLogisticsConstraint
+        : initialData.siteConditionLogisticsConstraint ?? false;
     const exitYear = Number.isFinite(formData.exitYear)
       ? formData.exitYear
       : initialData.exitYear ?? 10;
@@ -1139,6 +1246,11 @@ export const SimulationForm: React.FC<Props> = ({
       developmentConstructionMonths === formData.developmentConstructionMonths &&
       developmentLeaseUpMonths === formData.developmentLeaseUpMonths &&
       developmentInterestOnlyMonths === formData.developmentInterestOnlyMonths &&
+      siteConditionDemolition === formData.siteConditionDemolition &&
+      siteConditionRetainingWall === formData.siteConditionRetainingWall &&
+      siteConditionGroundImprovement === formData.siteConditionGroundImprovement &&
+      siteConditionBasement === formData.siteConditionBasement &&
+      siteConditionLogisticsConstraint === formData.siteConditionLogisticsConstraint &&
       exitYear === formData.exitYear &&
       exitCapRate === formData.exitCapRate &&
       exitBrokerageRate === formData.exitBrokerageRate &&
@@ -1204,6 +1316,11 @@ export const SimulationForm: React.FC<Props> = ({
       developmentConstructionMonths,
       developmentLeaseUpMonths,
       developmentInterestOnlyMonths,
+      siteConditionDemolition,
+      siteConditionRetainingWall,
+      siteConditionGroundImprovement,
+      siteConditionBasement,
+      siteConditionLogisticsConstraint,
       exitYear,
       exitCapRate,
       exitBrokerageRate,
@@ -1223,11 +1340,16 @@ export const SimulationForm: React.FC<Props> = ({
 
   // 入力が変わるたびに状態を更新し、親へ通知（リアルタイム計算用）
   const handleChange = (key: keyof PropertyInput, value: any) => {
-    const newData = { ...formData, [key]: value };
-    setFormData(newData);
+    let next = { ...formData, [key]: value };
+    if (key === "unitCount" && next.investmentMode === "NEW_DEVELOPMENT") {
+      next = syncDevelopmentDerivedInput(
+        applySuggestedDevelopmentDefaults(next, formData)
+      );
+    }
+    setFormData(next);
     setIsPristine(false);
     onFieldTouch?.(key);
-    onCalculate(newData);
+    onCalculate(next);
   };
 
   const handleInvestmentModeChange = (value: InvestmentMode) => {
@@ -1245,10 +1367,11 @@ export const SimulationForm: React.FC<Props> = ({
       investmentMode: value,
       developmentInterestOnlyMonths: nextInterestOnlyMonths,
     };
+    const suggested = applySuggestedDevelopmentDefaults(nextBase, formData);
     const synced =
       value === "NEW_DEVELOPMENT"
-        ? syncDevelopmentDerivedInput(nextBase)
-        : nextBase;
+        ? syncDevelopmentDerivedInput(suggested)
+        : suggested;
     const nextLoanAmount = getLoanFromEquityRatio(
       synced.price,
       synced.equityRatio,
@@ -1273,7 +1396,20 @@ export const SimulationForm: React.FC<Props> = ({
       | "developmentInterestOnlyMonths",
     value: number
   ) => {
-    const nextBase = { ...formData, [key]: value };
+    const preservedKeys =
+      key === "developmentSoftCost" ||
+      key === "developmentOtherCost" ||
+      key === "developmentContingencyRate" ||
+      key === "developmentConstructionMonths" ||
+      key === "developmentLeaseUpMonths" ||
+      key === "developmentInterestOnlyMonths"
+        ? [key]
+        : undefined;
+    const nextBase = applySuggestedDevelopmentDefaults(
+      { ...formData, [key]: value },
+      formData,
+      { preserveKeys: preservedKeys }
+    );
     const synced = syncDevelopmentDerivedInput(nextBase);
     const nextLoanAmount = getLoanFromEquityRatio(
       synced.price,
@@ -1284,6 +1420,29 @@ export const SimulationForm: React.FC<Props> = ({
     const next = { ...synced, loanAmount: nextLoanAmount };
     setFormData(next);
     setIsPristine(false);
+    onFieldTouch?.(key);
+    onCalculate(next);
+  };
+
+  const handleDevelopmentSiteConditionToggle = (
+    key: DevelopmentSiteConditionKey,
+    checked: boolean
+  ) => {
+    const nextBase = applySuggestedDevelopmentDefaults(
+      { ...formData, [key]: checked },
+      formData
+    );
+    const synced = syncDevelopmentDerivedInput(nextBase);
+    const nextLoanAmount = getLoanFromEquityRatio(
+      synced.price,
+      synced.equityRatio,
+      synced.loanCoverageMode,
+      synced
+    );
+    const next = { ...synced, loanAmount: nextLoanAmount };
+    setFormData(next);
+    setIsPristine(false);
+    onFieldTouch?.(key);
     onCalculate(next);
   };
 
@@ -1404,7 +1563,14 @@ export const SimulationForm: React.FC<Props> = ({
   };
 
   const handleStructureChange = (value: StructureType) => {
-    const next = applyAutoBuildingRatio({ ...formData, structure: value });
+    const nextBase = applySuggestedDevelopmentDefaults(
+      applyAutoBuildingRatio({ ...formData, structure: value }),
+      formData
+    );
+    const next =
+      nextBase.investmentMode === "NEW_DEVELOPMENT"
+        ? syncDevelopmentDerivedInput(nextBase)
+        : nextBase;
     setFormData(next);
     setIsPristine(false);
     onFieldTouch?.("structure");
@@ -1813,6 +1979,9 @@ export const SimulationForm: React.FC<Props> = ({
 
                     {investmentModeValue === "NEW_DEVELOPMENT" ? (
                       <>
+                        <p className="form-note">
+                          未入力の開発前提は、東京RC共同住宅の標準Matrixから推定しています。
+                        </p>
                         <div className="form-grid two-col oer-top-grid">
                           <div>
                             {renderHelpLabel("土地代 (万円)", "developmentLandPrice")}
@@ -1842,12 +2011,48 @@ export const SimulationForm: React.FC<Props> = ({
                           </div>
                         </div>
 
+                        <div>
+                          <div className="input-label">
+                            <span className="input-label-text">Site conditions</span>
+                            {renderInfoButton("developmentSiteConditions", "Site conditions")}
+                          </div>
+                          <div className="form-grid three-col compact">
+                            {DEVELOPMENT_SITE_CONDITION_OPTIONS.map((option) => (
+                              <div key={option.helpKey}>
+                                <div className="inline-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(formData[option.helpKey])}
+                                    onChange={(e) =>
+                                      handleDevelopmentSiteConditionToggle(
+                                        option.helpKey,
+                                        e.target.checked
+                                      )
+                                    }
+                                  />
+                                  <label className="inline-label">
+                                    <span>{option.label}</span>
+                                  </label>
+                                  {renderInfoButton(option.helpKey, option.label)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="form-note">
+                            未入力の「造成・解体等」と「工期」に反映します。
+                            {developmentSiteConditionAdjustment.activeKeys.length > 0
+                              ? ` 現在の加算: 造成・解体等 +${developmentSiteConditionAdjustment.additionalOtherCostRatePercent.toFixed(1)}%、工期 +${developmentSiteConditionAdjustment.additionalConstructionMonths}カ月`
+                              : ""}
+                          </p>
+                        </div>
+
                         <div className="form-grid two-col oer-top-grid">
                           <div>
-                            {renderHelpLabel("設計・申請等 (万円)", "developmentSoftCost")}
+                            {renderLabel("設計・申請等 (万円)", "developmentSoftCost")}
                             <input
                               type="number"
                               value={displayValue(developmentSoftCostValue, 10000)}
+                              className={isAutoFilled("developmentSoftCost") ? "auto-input" : undefined}
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentSoftCost",
@@ -1857,10 +2062,11 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                           </div>
                           <div>
-                            {renderHelpLabel("造成・解体等 (万円)", "developmentOtherCost")}
+                            {renderLabel("造成・解体等 (万円)", "developmentOtherCost")}
                             <input
                               type="number"
                               value={displayValue(developmentOtherCostValue, 10000)}
+                              className={isAutoFilled("developmentOtherCost") ? "auto-input" : undefined}
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentOtherCost",
@@ -1873,11 +2079,14 @@ export const SimulationForm: React.FC<Props> = ({
 
                         <div className="form-grid three-col compact">
                           <div>
-                            {renderHelpLabel("予備費率 (%)", "developmentContingencyRate")}
+                            {renderLabel("予備費率 (%)", "developmentContingencyRate")}
                             <input
                               type="number"
                               step="0.1"
                               value={displayPercent(developmentContingencyRateValue)}
+                              className={
+                                isAutoFilled("developmentContingencyRate") ? "auto-input" : undefined
+                              }
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentContingencyRate",
@@ -1893,10 +2102,13 @@ export const SimulationForm: React.FC<Props> = ({
                             </p>
                           </div>
                           <div>
-                            {renderHelpLabel("工期（月）", "developmentConstructionMonths")}
+                            {renderLabel("工期（月）", "developmentConstructionMonths")}
                             <input
                               type="number"
                               value={displayValue(developmentConstructionMonthsValue)}
+                              className={
+                                isAutoFilled("developmentConstructionMonths") ? "auto-input" : undefined
+                              }
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentConstructionMonths",
@@ -1906,10 +2118,13 @@ export const SimulationForm: React.FC<Props> = ({
                             />
                           </div>
                           <div>
-                            {renderHelpLabel("リーシング立上げ（月）", "developmentLeaseUpMonths")}
+                            {renderLabel("リーシング立上げ（月）", "developmentLeaseUpMonths")}
                             <input
                               type="number"
                               value={displayValue(developmentLeaseUpMonthsValue)}
+                              className={
+                                isAutoFilled("developmentLeaseUpMonths") ? "auto-input" : undefined
+                              }
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentLeaseUpMonths",
@@ -1922,10 +2137,13 @@ export const SimulationForm: React.FC<Props> = ({
 
                         <div className="form-grid three-col compact">
                           <div>
-                            {renderHelpLabel("元本据置（月）", "developmentInterestOnlyMonths")}
+                            {renderLabel("元本据置（月）", "developmentInterestOnlyMonths")}
                             <input
                               type="number"
                               value={displayValue(developmentInterestOnlyMonthsValue)}
+                              className={
+                                isAutoFilled("developmentInterestOnlyMonths") ? "auto-input" : undefined
+                              }
                               onChange={(e) =>
                                 handleDevelopmentFieldChange(
                                   "developmentInterestOnlyMonths",

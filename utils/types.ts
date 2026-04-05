@@ -1,6 +1,12 @@
 // 物件構造の定義 [cite: 645-648]
 export type StructureType = 'RC' | 'SRC' | 'S_HEAVY' | 'S_LIGHT' | 'WOOD';
 export type InvestmentMode = 'EXISTING_ASSET' | 'NEW_DEVELOPMENT';
+export type DevelopmentSiteConditionKey =
+  | 'siteConditionDemolition'
+  | 'siteConditionRetainingWall'
+  | 'siteConditionGroundImprovement'
+  | 'siteConditionBasement'
+  | 'siteConditionLogisticsConstraint';
 
 // 構造ごとの法定耐用年数マスターデータ [cite: 646-648]
 export const LEGAL_USEFUL_LIFE: Record<StructureType, number> = {
@@ -74,6 +80,11 @@ export interface PropertyInput {
   developmentConstructionMonths: number; // 開発: 工期（月）
   developmentLeaseUpMonths: number; // 開発: リーシング立上げ（月）
   developmentInterestOnlyMonths: number; // 開発: 元本据置期間（月）
+  siteConditionDemolition: boolean; // 開発: 解体あり
+  siteConditionRetainingWall: boolean; // 開発: 擁壁・高低差あり
+  siteConditionGroundImprovement: boolean; // 開発: 地盤改良あり
+  siteConditionBasement: boolean; // 開発: 地下・ピットあり
+  siteConditionLogisticsConstraint: boolean; // 開発: 前面道路・搬入制約あり
   
   // 【重要機能】設備分離設定 [cite: 667]
   enableEquipmentSplit: boolean; // 設備分離をするか
