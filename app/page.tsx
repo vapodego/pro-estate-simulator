@@ -66,12 +66,16 @@ import { auth, db, googleProvider, isFirebaseConfigured } from "../utils/firebas
 import { Building2, Calculator, Download, FileText, History, Save, UserCircle } from "lucide-react";
 import { applyEstimatedDefaultsWithMeta } from "../utils/estimates";
 import {
+  buildDealWithSimulationArrival,
   buildDealSimulationExportFilename,
   buildDealWithSimulationRun,
   parseDealForSimulation,
   type DealDocument,
   type DealImportSummary,
 } from "../utils/deal";
+
+const VOLUME_CHECKER_API_BASE_URL =
+  process.env.NEXT_PUBLIC_VOLUME_CHECKER_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 // デフォルトの初期値（空の状態）
 const DEFAULT_INPUT: PropertyInput = {
@@ -1302,6 +1306,10 @@ export default function Home() {
   const analysisRunUrlRef = useRef<string | null>(null);
   const ridershipLookupKeyRef = useRef<string>("");
   const dealImportInputRef = useRef<HTMLInputElement | null>(null);
+  const autoImportedDealIdRef = useRef<string | null>(null);
+  const autoImportInFlightDealIdRef = useRef<string | null>(null);
+  const autoImportedDealDraftUrlRef = useRef<string | null>(null);
+  const autoImportInFlightDealDraftUrlRef = useRef<string | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const aiMessagesRef = useRef<HTMLDivElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1334,6 +1342,146 @@ export default function Home() {
     setImportedDealDraft(null);
     setImportedDealSummary(null);
     setDealIntegrationFeedback(null);
+  };
+
+  const applyImportedDeal = (
+    imported: ReturnType<typeof parseDealForSimulation>,
+    feedbackNote?: string,
+  ) => {
+    const { data, autoFilled } = applyEstimatedDefaultsWithMeta({
+      ...DEFAULT_INPUT,
+      ...imported.patch,
+    });
+    const nextExtraInfo = createDefaultExtraInfo();
+
+    if (imported.summary.address) {
+      nextExtraInfo.locationChecklist.address = imported.summary.address;
+    }
+
+    setImportedDealDraft(imported.dealDraft);
+    setImportedDealSummary(imported.summary);
+    const baseFeedback =
+      imported.summary.warnings.length > 0
+        ? `Deal ${imported.summary.dealId} を読み込みました。${imported.summary.warnings.join(" ")}`
+        : `Deal ${imported.summary.dealId} を読み込みました。Step 2 で前提を確認し、Step 3 で Deal に書き戻せます。`;
+    setDealIntegrationFeedback(
+      feedbackNote ? `${baseFeedback} ${feedbackNote}` : baseFeedback,
+    );
+    setInputData(data);
+    setAutoFilledKeys(autoFilled);
+    setSelectedImportId(null);
+    setHasImportResult(true);
+    setHasViewedResults(false);
+    setHasCompletedSteps(false);
+    setSelectedYear(1);
+    setExtraInfo(nextExtraInfo);
+    setAiMessages([]);
+    setAiError(null);
+    setAiCacheHit(false);
+    setPendingAiPromptId(null);
+    analysisRunIdRef.current = null;
+    analysisRunUrlRef.current = null;
+    setFormVersion((prev) => prev + 1);
+
+    if (imported.summary.address) {
+      void fetchLocationChecklistByAddress(imported.summary.address);
+    }
+  };
+
+  const syncImportedDealArrival = async (
+    imported: ReturnType<typeof parseDealForSimulation>,
+  ): Promise<ReturnType<typeof parseDealForSimulation>> => {
+    const nextDealDraft = buildDealWithSimulationArrival(imported.dealDraft);
+    const dealId = String(nextDealDraft.deal_id ?? "").trim();
+    if (!dealId) {
+      return imported;
+    }
+
+    const response = await fetch(
+      `${VOLUME_CHECKER_API_BASE_URL}/deals/${encodeURIComponent(dealId)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(nextDealDraft),
+      },
+    );
+    if (!response.ok) {
+      let detail = "";
+      try {
+        detail = await response.text();
+      } catch {
+        detail = "";
+      }
+      throw new Error(
+        detail
+          ? `共有DBへの到達記録に失敗しました (HTTP ${response.status}): ${detail}`
+          : `共有DBへの到達記録に失敗しました (HTTP ${response.status})。`,
+      );
+    }
+
+    return {
+      ...imported,
+      dealDraft: nextDealDraft,
+    };
+  };
+
+  const persistDealToSharedRegistry = async (
+    dealDraft: DealDocument,
+    failureLabel: string,
+  ): Promise<void> => {
+    const dealId = String(dealDraft.deal_id ?? "").trim();
+    if (!dealId) {
+      return;
+    }
+
+    const response = await fetch(
+      `${VOLUME_CHECKER_API_BASE_URL}/deals/${encodeURIComponent(dealId)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(dealDraft),
+      },
+    );
+    if (!response.ok) {
+      let detail = "";
+      try {
+        detail = await response.text();
+      } catch {
+        detail = "";
+      }
+      throw new Error(
+        detail
+          ? `${failureLabel}に失敗しました (HTTP ${response.status}): ${detail}`
+          : `${failureLabel}に失敗しました (HTTP ${response.status})。`,
+      );
+    }
+  };
+
+  const buildCurrentSimulationDealDraft = (): DealDocument | null => {
+    if (!importedDealDraft) {
+      return null;
+    }
+
+    return buildDealWithSimulationRun({
+      additionalInfoScore,
+      baseEquityMultiple,
+      baseSummary,
+      dealDraft: importedDealDraft,
+      exitIrr,
+      exitNpv,
+      exitSalePrice,
+      firstDeadCrossYear,
+      importedWarnings: importedDealSummary?.warnings ?? [],
+      input: inputData,
+      investmentScore,
+      results,
+      safetyScore,
+      totalProjectCost: totalPrice,
+    });
   };
 
   const updateInvestmentInput = <K extends keyof InvestmentInput>(
@@ -3362,7 +3510,27 @@ export default function Home() {
     }
     const name = saveName.trim() || "シミュレーション";
     setIsSaving(true);
+    let sharedRegistrySaved = false;
+    let sharedRegistryErrorMessage = "";
+    const persistedDealDraft = buildCurrentSimulationDealDraft();
     try {
+      if (persistedDealDraft) {
+        setImportedDealDraft(persistedDealDraft);
+        try {
+          await persistDealToSharedRegistry(
+            persistedDealDraft,
+            "共有DBへの試算結果保存",
+          );
+          sharedRegistrySaved = true;
+        } catch (error) {
+          sharedRegistryErrorMessage =
+            error instanceof Error
+              ? error.message
+              : "共有DBへの試算結果保存に失敗しました。";
+          console.warn("shared registry simulation save failed", error);
+        }
+      }
+
       await addDoc(collection(db, "simulations"), {
         userId: user.uid,
         name,
@@ -3371,10 +3539,29 @@ export default function Home() {
         listingUrl: selectedImport?.url ?? null,
         extraInfo,
         aiMessages,
+        dealId: String(
+          (persistedDealDraft?.deal_id ?? importedDealDraft?.deal_id ?? "") || "",
+        ).trim() || null,
         createdAt: serverTimestamp(),
       });
       setSaveName("");
+      if (sharedRegistrySaved) {
+        setDealIntegrationFeedback(
+          `${name} を保存しました。共通DBにも試算結果を保存しました。`,
+        );
+      } else if (sharedRegistryErrorMessage) {
+        setDealIntegrationFeedback(
+          `${name} を保存しました。${sharedRegistryErrorMessage}`,
+        );
+      }
     } catch (error) {
+      if (sharedRegistrySaved) {
+        setDealIntegrationFeedback(
+          "Firebase 保存に失敗しましたが、共通DBには試算結果を保存しました。",
+        );
+      } else if (sharedRegistryErrorMessage) {
+        setDealIntegrationFeedback(sharedRegistryErrorMessage);
+      }
       setAuthError(formatFirebaseError(error, "保存に失敗しました。"));
     } finally {
       setIsSaving(false);
@@ -3428,41 +3615,18 @@ export default function Home() {
 
     try {
       const imported = parseDealForSimulation(await file.text());
-      const { data, autoFilled } = applyEstimatedDefaultsWithMeta({
-        ...DEFAULT_INPUT,
-        ...imported.patch,
-      });
-      const nextExtraInfo = createDefaultExtraInfo();
-
-      if (imported.summary.address) {
-        nextExtraInfo.locationChecklist.address = imported.summary.address;
-      }
-
-      setImportedDealDraft(imported.dealDraft);
-      setImportedDealSummary(imported.summary);
-      setDealIntegrationFeedback(
-        imported.summary.warnings.length > 0
-          ? `Deal ${imported.summary.dealId} を読み込みました。${imported.summary.warnings.join(" ")}`
-          : `Deal ${imported.summary.dealId} を読み込みました。Step 2 で前提を確認し、Step 3 で Deal に書き戻せます。`,
-      );
-      setInputData(data);
-      setAutoFilledKeys(autoFilled);
-      setSelectedImportId(null);
-      setHasImportResult(true);
-      setHasViewedResults(false);
-      setHasCompletedSteps(false);
-      setSelectedYear(1);
-      setExtraInfo(nextExtraInfo);
-      setAiMessages([]);
-      setAiError(null);
-      setAiCacheHit(false);
-      setPendingAiPromptId(null);
-      analysisRunIdRef.current = null;
-      analysisRunUrlRef.current = null;
-      setFormVersion((prev) => prev + 1);
-
-      if (imported.summary.address) {
-        void fetchLocationChecklistByAddress(imported.summary.address);
+      try {
+        applyImportedDeal(
+          await syncImportedDealArrival(imported),
+          "共有DBに到達記録を書き込みました。",
+        );
+      } catch (syncError) {
+        applyImportedDeal(
+          imported,
+          syncError instanceof Error
+            ? `ただし、${syncError.message}`
+            : "ただし、共有DBへの到達記録は書き込めませんでした。",
+        );
       }
     } catch (error) {
       clearDealIntegrationContext();
@@ -3473,6 +3637,141 @@ export default function Home() {
       );
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const currentUrl = new URL(window.location.href);
+    const dealId = currentUrl.searchParams.get("deal_id")?.trim() ?? "";
+    const dealDraftUrl = currentUrl.searchParams.get("deal_draft_url")?.trim() ?? "";
+    if (
+      !dealId &&
+      (
+        !dealDraftUrl ||
+        autoImportedDealDraftUrlRef.current === dealDraftUrl ||
+        autoImportInFlightDealDraftUrlRef.current === dealDraftUrl
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        if (
+          dealId &&
+          autoImportedDealIdRef.current !== dealId &&
+          autoImportInFlightDealIdRef.current !== dealId
+        ) {
+          autoImportInFlightDealIdRef.current = dealId;
+          try {
+            const response = await fetch(
+              `${VOLUME_CHECKER_API_BASE_URL}/deals/${encodeURIComponent(dealId)}`,
+              {
+                cache: "no-store",
+                credentials: "omit",
+              },
+            );
+            if (!response.ok) {
+              throw new Error(`Deal JSON の取得に失敗しました (HTTP ${response.status})。`);
+            }
+            const imported = parseDealForSimulation(
+              `${JSON.stringify(await response.json(), null, 2)}\n`,
+            );
+            if (cancelled) {
+              return;
+            }
+            try {
+              applyImportedDeal(
+                await syncImportedDealArrival(imported),
+                "共有DBに到達記録を書き込みました。",
+              );
+            } catch (syncError) {
+              applyImportedDeal(
+                imported,
+                syncError instanceof Error
+                  ? `ただし、${syncError.message}`
+                  : "ただし、共有DBへの到達記録は書き込めませんでした。",
+              );
+            }
+            autoImportedDealIdRef.current = dealId;
+            currentUrl.searchParams.delete("deal_id");
+            currentUrl.searchParams.delete("deal_draft_url");
+            window.history.replaceState({}, "", currentUrl.toString());
+            return;
+          } finally {
+            if (autoImportInFlightDealIdRef.current === dealId) {
+              autoImportInFlightDealIdRef.current = null;
+            }
+          }
+        }
+
+        if (
+          !dealDraftUrl ||
+          autoImportedDealDraftUrlRef.current === dealDraftUrl ||
+          autoImportInFlightDealDraftUrlRef.current === dealDraftUrl
+        ) {
+          return;
+        }
+        autoImportInFlightDealDraftUrlRef.current = dealDraftUrl;
+        const response = await fetch(dealDraftUrl, {
+          cache: "no-store",
+          credentials: "omit",
+        });
+        if (!response.ok) {
+          throw new Error(`Deal JSON の取得に失敗しました (HTTP ${response.status})。`);
+        }
+        const imported = parseDealForSimulation(await response.text());
+        if (cancelled) {
+          return;
+        }
+        try {
+          applyImportedDeal(
+            await syncImportedDealArrival(imported),
+            "共有DBに到達記録を書き込みました。",
+          );
+        } catch (syncError) {
+          applyImportedDeal(
+            imported,
+            syncError instanceof Error
+              ? `ただし、${syncError.message}`
+              : "ただし、共有DBへの到達記録は書き込めませんでした。",
+          );
+        }
+        autoImportedDealDraftUrlRef.current = dealDraftUrl;
+        currentUrl.searchParams.delete("deal_id");
+        currentUrl.searchParams.delete("deal_draft_url");
+        window.history.replaceState({}, "", currentUrl.toString());
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        clearDealIntegrationContext();
+        setDealIntegrationFeedback(
+          error instanceof Error
+            ? error.message
+            : "Deal JSON の自動取込に失敗しました。",
+        );
+      } finally {
+        if (autoImportInFlightDealDraftUrlRef.current === dealDraftUrl) {
+          autoImportInFlightDealDraftUrlRef.current = null;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (autoImportInFlightDealIdRef.current === dealId) {
+        autoImportInFlightDealIdRef.current = null;
+      }
+      if (autoImportInFlightDealDraftUrlRef.current === dealDraftUrl) {
+        autoImportInFlightDealDraftUrlRef.current = null;
+      }
+    };
+  }, [applyImportedDeal]);
 
   const handleImportApply = (payload: {
     patch: Partial<PropertyInput>;
@@ -4610,28 +4909,25 @@ export default function Home() {
     lifullRowFocusIndexes.walk,
   ]);
 
-  const handleExportDealSimulation = () => {
+  const handleExportDealSimulation = async () => {
     if (!importedDealDraft) {
       return;
     }
 
     try {
-      const nextDeal = buildDealWithSimulationRun({
-        additionalInfoScore,
-        baseEquityMultiple,
-        baseSummary,
-        dealDraft: importedDealDraft,
-        exitIrr,
-        exitNpv,
-        exitSalePrice,
-        firstDeadCrossYear,
-        importedWarnings: importedDealSummary?.warnings ?? [],
-        input: inputData,
-        investmentScore,
-        results,
-        safetyScore,
-        totalProjectCost: totalPrice,
-      });
+      const nextDeal = buildCurrentSimulationDealDraft();
+      if (!nextDeal) {
+        return;
+      }
+      let sharedRegistrySaved = false;
+      setImportedDealDraft(nextDeal);
+
+      try {
+        await persistDealToSharedRegistry(nextDeal, "共有DBへの試算結果保存");
+        sharedRegistrySaved = true;
+      } catch (sharedError) {
+        console.warn("shared registry simulation save failed", sharedError);
+      }
       const href = URL.createObjectURL(
         new Blob([`${JSON.stringify(nextDeal, null, 2)}\n`], {
           type: "application/json;charset=utf-8",
@@ -4646,7 +4942,11 @@ export default function Home() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(href);
-      setDealIntegrationFeedback(`${fileName} をダウンロードしました。`);
+      setDealIntegrationFeedback(
+        sharedRegistrySaved
+          ? `${fileName} をダウンロードし、共通DBにも試算結果を保存しました。`
+          : `${fileName} をダウンロードしました。共通DBへの保存は確認できなかったため、この JSON を控えとして残してください。`,
+      );
     } catch (error) {
       console.warn("deal simulation export failed", error);
       setDealIntegrationFeedback("Deal JSON の書き出しに失敗しました。");

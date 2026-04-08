@@ -130,6 +130,44 @@ export function parseDealForSimulation(text: string): DealImportResult {
   return buildDealImport(parsed);
 }
 
+export function buildDealWithSimulationArrival(dealDraft: DealDocument): DealDocument {
+  const nextDeal = cloneJson(dealDraft);
+  const acknowledgedAt = new Date().toISOString();
+  const metadata = ensureObject(nextDeal, "metadata");
+  const workflow = ensureObject(nextDeal, "workflow");
+  const volume = ensureObject(nextDeal, "volume");
+  const simulation = ensureObject(nextDeal, "simulation");
+  const currentPipelineStage = asString(workflow.pipeline_stage) ?? "";
+  const currentSimulationStatus =
+    asString(workflow.simulation_status) ?? asString(simulation.status) ?? "not_started";
+
+  metadata.tags = uniqueStrings(asStringArray(metadata.tags), ["tool:pro-estate-simulator"]);
+  nextDeal.updated_at = acknowledgedAt;
+
+  if (currentSimulationStatus !== "complete") {
+    simulation.status = "in_progress";
+    workflow.simulation_status = "in_progress";
+  }
+
+  workflow.last_writer = "pro-estate-simulator";
+  workflow.next_action =
+    currentSimulationStatus === "complete"
+      ? asString(workflow.next_action) ??
+        "Review the final investment memo and go/no-go decision."
+      : "Review simulator assumptions and run the investment simulation.";
+
+  if (!TERMINAL_PIPELINE_STAGES.has(currentPipelineStage)) {
+    workflow.pipeline_stage =
+      currentSimulationStatus === "complete" ? "simulated" : "simulation_ready";
+  }
+
+  if (getSelectedItemId(volume, "selected_study_id", "studies", "study_id")) {
+    workflow.volume_status = "complete";
+  }
+
+  return nextDeal;
+}
+
 export function buildDealWithSimulationRun({
   additionalInfoScore,
   baseEquityMultiple,
