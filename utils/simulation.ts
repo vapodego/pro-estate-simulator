@@ -79,10 +79,13 @@ const calculatePropertyTax = (params: {
 
 // PMT関数（毎月の返済額計算）
 export const calculatePMT = (rate: number, periods: number, present: number): number => {
-  if (rate === 0) return present / periods;
+  const safePeriods = Number.isFinite(periods) ? Math.max(0, periods) : 0;
+  const safePresent = Number.isFinite(present) ? Math.max(0, present) : 0;
+  if (safePeriods <= 0 || safePresent <= 0) return 0;
+  if (rate === 0) return safePresent / (safePeriods * 12);
   const monthlyRate = rate / 12 / 100;
-  const numPayments = periods * 12;
-  return (present * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -numPayments));
+  const numPayments = safePeriods * 12;
+  return (safePresent * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -numPayments));
 };
 
 const INCOME_TAX_BRACKETS = [
